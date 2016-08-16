@@ -1,0 +1,4 @@
+*.cmake
+/lib/
+/build/
+/include/
