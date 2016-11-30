@@ -140,21 +140,20 @@ private:
      *  @param  clusterDirection the cluster direction at closest endpoint (max or min layer of sliding fit)
      *  @param  localWeightedDirectionSum current local event axis sum using energy or hit weighting
      * 
-     *  @return whether the asymmetry calculation is viable
      */
-    bool IncrementEnergyAsymmetryParameters(const float weight, const pandora::CartesianVector &clusterDirection,
-        pandora::CartesianVector &localWeightedDirectionSum) const;
+    void IncrementEnergyAsymmetryParameters(const float weight, const pandora::CartesianVector &clusterDirection,
+         pandora::CartesianVector &localWeightedDirectionSum) const;
 
     /**
      *  @brief  Calculate the energy asymmetry for a vertex in a given view using the calculated parameters
      * 
      *  @param  useEnergyMetrics whether to use the energy metrics, or to revert to hit-based metrics
      *  @param  vertexPosition2D the projection of the vertex's position into this view
-     *  @param  asymmetryClusters the list of clusters considered for the energy asymmetry calculation
+     *  @param  slidingFitDataList the list of sliding fits for all the 2D clusters
      *  @param  localWeightedDirection current local event axis using energy or hit weighting
      */
     float CalculateEnergyAsymmetry(const bool useEnergyMetrics, const pandora::CartesianVector &vertexPosition2D,
-        const pandora::ClusterVector &asymmetryClusters, const pandora::CartesianVector &localWeightedDirection) const;
+        const SlidingFitDataList &slidingFitDataList, const pandora::CartesianVector &localWeightedDirection) const;
 
     pandora::StatusCode ReadSettings(const pandora::TiXmlHandle xmlHandle);
 
@@ -168,8 +167,6 @@ private:
 
     float                   m_asymmetryConstant;            ///< The asymmetry constant parameter in the energy score
     float                   m_maxAsymmetryDistance;         ///< The max distance between cluster (any hit) and vertex to calculate asymmetry score
-    float                   m_minAsymmetryCosAngle;         ///< The min opening angle cosine used to determine viability of asymmetry score
-    unsigned int            m_maxAsymmetryNClusters;        ///< The max number of associated clusters to calculate the asymmetry
 };
 
 //------------------------------------------------------------------------------------------------------------------------------------------
