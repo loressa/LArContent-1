@@ -47,6 +47,7 @@
 #include "larpandoracontent/LArThreeDReco/LArCosmicRay/CosmicRayVertexBuildingAlgorithm.h"
 #include "larpandoracontent/LArThreeDReco/LArEventBuilding/BranchAssociatedPfosTool.h"
 #include "larpandoracontent/LArThreeDReco/LArEventBuilding/EndAssociatedPfosTool.h"
+#include "larpandoracontent/LArThreeDReco/LArEventBuilding/CheatingAssociatedPfosTool.h"
 #include "larpandoracontent/LArThreeDReco/LArEventBuilding/EventSlicingTool.h"
 #include "larpandoracontent/LArThreeDReco/LArEventBuilding/NeutrinoCreationAlgorithm.h"
 #include "larpandoracontent/LArThreeDReco/LArEventBuilding/NeutrinoDaughterVerticesAlgorithm.h"
@@ -231,6 +232,7 @@ public:
         d("LArCheatingEventSlicing",                lar_content::CheatingEventSlicingTool::Factory)                             \
         d("LArBranchAssociatedPfos",                lar_content::BranchAssociatedPfosTool::Factory)                             \
         d("LArEndAssociatedPfos",                   lar_content::EndAssociatedPfosTool::Factory)                                \
+        d("LArCheatingAssociatedPfos",              lar_content::CheatingAssociatedPfosTool::Factory)                           \
         d("LArEventSlicing",                        lar_content::EventSlicingTool::Factory)                                     \
         d("LArVertexAssociatedPfos",                lar_content::VertexAssociatedPfosTool::Factory)                             \
         d("LArClearShowers",                        lar_content::ClearShowersTool::Factory)                                     \
