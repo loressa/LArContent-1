@@ -31,7 +31,8 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_showerDeweightingConstant(1.f),
     m_showerCollapsingConstant(0.f),
     m_minShowerSpineLength(15.f),
-    m_maxAsymmetryDistance(5.f)
+    m_maxAsymmetryDistance(5.f),
+    m_minShowerSpineLength(15.f)
 {
 }
 
@@ -56,18 +57,6 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
 
         const float energyKickScore(std::exp(-energyKick / m_epsilon));
         const float energyAsymmetryScore(std::exp(energyAsymmetry / m_asymmetryConstant));
-        
-        //----------------------------------------------------------------------------------------------------------------------------------
-        
-        const CartesianVector vertexPos(pVertex->GetPosition());
-        std::cout << "\033[1;31m * Considering vertex at (" << vertexPos.GetX() << ", " << vertexPos.GetY() << ", " << vertexPos.GetZ() << ")" << std::endl;
-        std::cout << "\033[1;31m     -> Energy kick score:  " << energyKickScore << "\033[0m" << std::endl;
-        std::cout << "\033[1;31m     -> Energy asym score:  " << energyAsymmetryScore << "\033[0m" << std::endl;
-        std::cout << "\033[1;31m     -> Beam dewtng score:  " << beamDeweightingScore << "\033[0m" << std::endl;
-        std::cout << "\033[1;31m     -> Combined    score:  " <<  beamDeweightingScore * energyKickScore * energyAsymmetryScore << "\033[0m" << std::endl;
-        std::cout << std::endl;
-
-        //----------------------------------------------------------------------------------------------------------------------------------
         
         vertexScoreList.push_back(VertexScore(pVertex, beamDeweightingScore * energyKickScore * energyAsymmetryScore));
     }
@@ -151,18 +140,22 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
             this->IncrementEnergyAsymmetryParameters(static_cast<float>(pCluster->GetNCaloHits()), clusterDirection, hitWeightedDirectionSum);
         }
     }
-  
-    // Default: maximum asymmetry (i.e. not suppressed), zero for energy kick (i.e. not suppressed)
-    if ((0 == totHits) || (useEnergy && (totEnergy < std::numeric_limits<float>::epsilon())) || (useEnergy && energyWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)) || (!useEnergy && hitWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)))
-    {
-        energyAsymmetry += 1.f;
-        return;
-    }
     
-    energyKick += useEnergy ? (totEnergyKick / totEnergy) : (totHitKick / static_cast<float>(totHits));
+    // ATTN: Look into the logic here...
+    if ((0 == totHits) || (useEnergy && (totEnergy < std::numeric_limits<float>::epsilon())))
+        energyKick += 0.f; // what should this be?
+        
+    else
+        energyKick += useEnergy ? (totEnergyKick / totEnergy) : (totHitKick / static_cast<float>(totHits));
+        
     const CartesianVector &localWeightedDirectionSum(useEnergy ? energyWeightedDirectionSum : hitWeightedDirectionSum);
         
-    energyAsymmetry += this->CalculateEnergyAsymmetry(useEnergy, vertexPosition2D, slidingFitDataList, localWeightedDirectionSum);
+    // Default: maximum asymmetry (i.e. not suppressed), zero for energy kick (i.e. not suppressed)
+    if ((useEnergy && energyWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)) || (!useEnergy && hitWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)))
+        energyAsymmetry += 0.f; // what should this be?
+    
+    else
+        energyAsymmetry += this->CalculateEnergyAsymmetry(useEnergy, vertexPosition2D, slidingFitDataList, localWeightedDirectionSum);
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -315,6 +308,18 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "MaxAsymmetryDistance", m_maxAsymmetryDistance));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "BeamDeweightingConstant", m_beamDeweightingConstant));
+    
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "ShowerDeweightingConstant", m_showerDeweightingConstant));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "ShowerCollapsingConstant", m_showerCollapsingConstant));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "MinShowerSpineLength", m_minShowerSpineLength));
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "BeamDeweightingConstant", m_beamDeweightingConstant));
