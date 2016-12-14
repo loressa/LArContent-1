@@ -26,7 +26,11 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_xOffset(0.06),
     m_epsilon(0.06),
     m_asymmetryConstant(3.f),
-    m_maxAsymmetryDistance(5.f)
+    m_maxAsymmetryDistance(5.f),
+    m_beamDeweightingConstant(1.f),
+    m_showerDeweightingConstant(1.f),
+    m_showerCollapsingConstant(0.f),
+    m_minShowerSpineLength(15.f)
 {
 }
 
@@ -34,14 +38,14 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
 
 void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexVector, const BeamConstants &beamConstants,
     HitKDTree2D &/*kdTreeU*/, HitKDTree2D &/*kdTreeV*/, HitKDTree2D &/*kdTreeW*/, VertexScoreList &vertexScoreList) const
-{
+{    
     SlidingFitDataList slidingFitDataListU, slidingFitDataListV, slidingFitDataListW;
     this->CalculateClusterSlidingFits(slidingFitDataListU, slidingFitDataListV, slidingFitDataListW);
 
     for (const Vertex *const pVertex : vertexVector)
     {
         const float vertexMinZ(std::max(pVertex->GetPosition().GetZ(), beamConstants.GetMinZCoordinate()));
-        const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(-(vertexMinZ - beamConstants.GetMinZCoordinate()) * beamConstants.GetDecayConstant()) : 1.f);
+        const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(-(vertexMinZ - beamConstants.GetMinZCoordinate()) * beamConstants.GetDecayConstant() / m_beamDeweightingConstant) : 1.f);
 
         float energyKick(0.f), energyAsymmetry(0.f);
         
@@ -51,18 +55,6 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
 
         const float energyKickScore(std::exp(-energyKick / m_epsilon));
         const float energyAsymmetryScore(std::exp(energyAsymmetry / m_asymmetryConstant));
-        
-        //----------------------------------------------------------------------------------------------------------------------------------
-        
-        const CartesianVector vertexPos(pVertex->GetPosition());
-        std::cout << "\033[1;31m * Considering vertex at (" << vertexPos.GetX() << ", " << vertexPos.GetY() << ", " << vertexPos.GetZ() << ")" << std::endl;
-        std::cout << "\033[1;31m     -> Energy kick score:  " << energyKickScore << "\033[0m" << std::endl;
-        std::cout << "\033[1;31m     -> Energy asym score:  " << energyAsymmetryScore << "\033[0m" << std::endl;
-        std::cout << "\033[1;31m     -> Beam dewtng score:  " << beamDeweightingScore << "\033[0m" << std::endl;
-        std::cout << "\033[1;31m     -> Combined    score:  " <<  beamDeweightingScore * energyKickScore * energyAsymmetryScore << "\033[0m" << std::endl;
-        std::cout << std::endl;
-
-        //----------------------------------------------------------------------------------------------------------------------------------
         
         vertexScoreList.push_back(VertexScore(pVertex, beamDeweightingScore * energyKickScore * energyAsymmetryScore));
     }
@@ -147,17 +139,20 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
         }
     }
     
-    // Default: maximum asymmetry (i.e. not suppressed), zero for energy kick (i.e. not suppressed)
-    if ((0 == totHits) || (useEnergy && (totEnergy < std::numeric_limits<float>::epsilon())) || (useEnergy && energyWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)) || (!useEnergy && hitWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)))
-    {
-        energyAsymmetry += 1.f;
-        return;
-    }
-    
-    energyKick += useEnergy ? (totEnergyKick / totEnergy) : (totHitKick / static_cast<float>(totHits));
+    if ((0 == totHits) || (useEnergy && (totEnergy < std::numeric_limits<float>::epsilon())))
+        energyKick += 0.f; // what should this be?
+        
+    else
+        energyKick += useEnergy ? (totEnergyKick / totEnergy) : (totHitKick / static_cast<float>(totHits));
+        
     const CartesianVector &localWeightedDirectionSum(useEnergy ? energyWeightedDirectionSum : hitWeightedDirectionSum);
         
-    energyAsymmetry += this->CalculateEnergyAsymmetry(useEnergy, vertexPosition2D, slidingFitDataList, localWeightedDirectionSum);
+    // Default: maximum asymmetry (i.e. not suppressed), zero for energy kick (i.e. not suppressed)
+    if ((useEnergy && energyWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)) || (!useEnergy && hitWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)))
+        energyAsymmetry += 0.f; // what should this be?
+    
+    else
+        energyAsymmetry += this->CalculateEnergyAsymmetry(useEnergy, vertexPosition2D, slidingFitDataList, localWeightedDirectionSum);
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -165,14 +160,30 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
 void EnergyKickVertexSelectionAlgorithm::IncrementEnergyKickParameters(const Cluster *const pCluster, const CartesianVector &clusterDisplacement,
     const CartesianVector &clusterDirection, float &totEnergyKick, float &totEnergy, float &totHitKick, unsigned int &totHits) const
 {
-    const float impactParameter(clusterDisplacement.GetCrossProduct(clusterDirection).GetMagnitude());   
+    float impactParameter(clusterDisplacement.GetCrossProduct(clusterDirection).GetMagnitude());   
     const float displacement(clusterDisplacement.GetMagnitude());
+        
+    if (pCluster->GetParticleId() == E_MINUS && LArClusterHelper::GetLength(pCluster) < m_minShowerSpineLength)
+    {        
+        totEnergyKick += m_showerDeweightingConstant * pCluster->GetElectromagneticEnergy() * 
+                        (m_showerCollapsingConstant * impactParameter + m_xOffset) / (displacement + m_rOffset);
+                        
+        totEnergy += m_showerDeweightingConstant * pCluster->GetElectromagneticEnergy();
+        
+        totHitKick += static_cast<float>(m_showerDeweightingConstant * pCluster->GetNCaloHits()) * 
+                      (m_showerCollapsingConstant * impactParameter + m_xOffset) / (displacement + m_rOffset);
+                      
+        totHits += static_cast<int>(std::round(m_showerDeweightingConstant * pCluster->GetNCaloHits()));
+    }
 
-    totEnergyKick += pCluster->GetElectromagneticEnergy() * (impactParameter + m_xOffset) / (displacement + m_rOffset);
-    totEnergy += pCluster->GetElectromagneticEnergy();
-
-    totHitKick += static_cast<float>(pCluster->GetNCaloHits()) * (impactParameter + m_xOffset) / (displacement + m_rOffset);
-    totHits += pCluster->GetNCaloHits();
+    else
+    {
+        totEnergyKick += pCluster->GetElectromagneticEnergy() * (impactParameter + m_xOffset) / (displacement + m_rOffset);
+        totEnergy += pCluster->GetElectromagneticEnergy();
+        
+        totHitKick += static_cast<float>(pCluster->GetNCaloHits()) * (impactParameter + m_xOffset) / (displacement + m_rOffset);
+        totHits += pCluster->GetNCaloHits();
+    }
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -294,6 +305,18 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "MaxAsymmetryDistance", m_maxAsymmetryDistance));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "BeamDeweightingConstant", m_beamDeweightingConstant));
+    
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "ShowerDeweightingConstant", m_showerDeweightingConstant));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "ShowerCollapsingConstant", m_showerCollapsingConstant));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "MinShowerSpineLength", m_minShowerSpineLength));
 
     return VertexSelectionBaseAlgorithm::ReadSettings(xmlHandle);
 }
