@@ -116,7 +116,7 @@ private:
      *  
      *  @return the energy score
      */
-    void IncrementEnergyScoresForView(const pandora::CartesianVector &vertexPosition2D, float &energyKick, float &energyAsymmetry,
+    void IncrementEnergyScoresForView(const pandora::CartesianVector &vertexPosition2D, float &energyKick, float &energyAsymmetry, float &localEnergyAsymmetry,
         const SlidingFitDataList &slidingFitDataList) const;
 
     /**
@@ -132,6 +132,8 @@ private:
      */
     void IncrementEnergyKickParameters(const pandora::Cluster *const pCluster, const pandora::CartesianVector &clusterDisplacement,
         const pandora::CartesianVector &clusterDirection, float &totEnergyKick, float &totEnergy, float &totHitKick, unsigned int &totHits) const;
+
+    bool IsClusterShowerLike(const pandora::Cluster *const pCluster) const;
 
     /**
      *  @brief  Increment the parameters used to calculate the energy asymmetry for a given cluster and a given vertex
@@ -152,7 +154,7 @@ private:
      *  @param  slidingFitDataList the list of sliding fits for all the 2D clusters
      *  @param  localWeightedDirection current local event axis using energy or hit weighting
      */
-    float CalculateEnergyAsymmetry(const bool useEnergyMetrics, const pandora::CartesianVector &vertexPosition2D,
+    void IncrementEnergyAsymmetry(float &energyAsymmetry, float &localEnergyAsymmetry, const pandora::ClusterList &localAsymmetryClusterList, const bool useEnergyMetrics, const pandora::CartesianVector &vertexPosition2D,
         const SlidingFitDataList &slidingFitDataList, const pandora::CartesianVector &localWeightedDirection) const;
 
     pandora::StatusCode ReadSettings(const pandora::TiXmlHandle xmlHandle);
@@ -167,11 +169,17 @@ private:
 
     float                   m_asymmetryConstant;            ///< The asymmetry constant parameter in the energy score
     float                   m_maxAsymmetryDistance;         ///< The max distance between cluster (any hit) and vertex to calculate asymmetry score
+    
+    float                   m_localAsymmetryConstant;       ///< ...
+    bool                    m_useLocalAsymmetry;            ///< ...
 
     float                   m_beamDeweightingConstant;      ///< ...
     float                   m_showerDeweightingConstant;    ///< ...
     float                   m_showerCollapsingConstant;     ///< ...
     float                   m_minShowerSpineLength;         ///< ...
+    
+    bool                    m_useClusterCharacterisation;   ///< ...
+    float                   m_maxTrackLikeDeviation;        ///< ...
 };
 
 //------------------------------------------------------------------------------------------------------------------------------------------
