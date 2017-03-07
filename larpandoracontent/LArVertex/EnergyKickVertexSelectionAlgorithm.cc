@@ -30,8 +30,6 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_beamDeweightingConstant(1.f),
     m_showerDeweightingConstant(1.f),
     m_showerCollapsingConstant(0.f),
-    m_minShowerSpineLength(15.f),
-    m_maxAsymmetryDistance(5.f),
     m_minShowerSpineLength(15.f)
 {
 }
