@@ -26,6 +26,7 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_epsilon(0.06),
     m_asymmetryConstant(3.f),
     m_maxAsymmetryDistance(5.f),
+    m_localMaxAsymmetryDistance(1.f),
     m_localAsymmetryConstant(0.4),
     m_useLocalAsymmetry(true),
     m_beamDeweightingConstant(1.f),
@@ -141,8 +142,10 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
         {
             this->IncrementEnergyAsymmetryParameters(pCluster->GetElectromagneticEnergy(), clusterDirection, energyWeightedDirectionSum);
             this->IncrementEnergyAsymmetryParameters(static_cast<float>(pCluster->GetNCaloHits()), clusterDirection, hitWeightedDirectionSum);
-            localAsymmetryClusterList.push_back(pCluster);
         }
+        
+        if (LArClusterHelper::GetClosestDistance(vertexPosition2D, pCluster) < m_localMaxAsymmetryDistance)
+            localAsymmetryClusterList.push_back(pCluster);
     }
     
     // ATTN: Look into the logic here...
@@ -201,8 +204,6 @@ bool EnergyKickVertexSelectionAlgorithm::IsClusterShowerLike(const Cluster *cons
         return (pCluster->GetParticleId() == E_MINUS && LArClusterHelper::GetLength(pCluster) < m_minShowerSpineLength);
         
     // ATTN: use the already-calculated sliding fits instead!
-        
-    // Get sliding fit.
     const float slidingFitPitch(LArGeometryHelper::GetWireZPitch(this->GetPandora()));
     
     // Make sure the window size is such that there are not more layers than hits (following TwoDSlidingLinearFit calculation).
@@ -256,8 +257,8 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyAsymmetry(float &energyA
     const SlidingFitDataList &slidingFitDataList, const CartesianVector &localWeightedDirectionSum) const
 {
     // Project every hit onto local event axis direction and record side of the projected vtx position on which it falls
-    float beforeVtxHitEnergy(0.f), afterVtxHitEnergy(0.f), localBeforeVtxHitEnergy(0.f), localAfterVtxHitEnergy(0.f);
-    unsigned int beforeVtxHitCount(0), afterVtxHitCount(0), localBeforeVtxHitCount(0), localAfterVtxHitCount(0);
+    float beforeVtxHitEnergy(0.f), afterVtxHitEnergy(0.f);
+    unsigned int beforeVtxHitCount(0), afterVtxHitCount(0);
 
     const CartesianVector localWeightedDirection(localWeightedDirectionSum.GetUnitVector());
     const float evtProjectedVtxPos(vertexPosition2D.GetDotProduct(localWeightedDirection));
@@ -287,8 +288,30 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyAsymmetry(float &energyA
         }
     }
     
+    std::vector<std::pair<float, float>> energyAsymmetryVec;
+    
     for (const Cluster *const pCluster : localAsymmetryClusterList)
     {        
+        // ATTN: use the already-calculated sliding fits.
+        const float slidingFitPitch(LArGeometryHelper::GetWireZPitch(this->GetPandora()));
+    
+        // Make sure the window size is such that there are not more layers than hits (following TwoDSlidingLinearFit calculation).
+        const int slidingFitWindow(std::min(static_cast<int>(pCluster->GetNCaloHits()), static_cast<int>(slidingFitPitch * m_slidingFitWindow)));
+        const TwoDSlidingFitResult slidingFitResult(pCluster, slidingFitWindow, slidingFitPitch);
+        
+        // Check if candidate bisects cluster.
+        const CartesianVector minFitPos = slidingFitResult.GetGlobalMinLayerPosition();
+        const CartesianVector maxFitPos = slidingFitResult.GetGlobalMaxLayerPosition();
+        const CartesianVector clusterAxis = (maxFitPos - minFitPos).GetUnitVector();
+        
+        const float projVertexPos = (vertexPosition2D - minFitPos).GetDotProduct(clusterAxis);
+        
+        if (projVertexPos < 0.f || projVertexPos > (maxFitPos - minFitPos).GetMagnitude())
+            continue;
+        
+        float localBeforeVtxHitEnergy(0.f), localAfterVtxHitEnergy(0.f);
+        unsigned int localBeforeVtxHitCount(0), localAfterVtxHitCount(0);
+        
         CaloHitList caloHitList;
         pCluster->GetOrderedCaloHitList().FillCaloHitList(caloHitList);
 
@@ -297,30 +320,44 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyAsymmetry(float &energyA
 
         for (const CaloHit *const pCaloHit : caloHitVector)
         {
-            if (pCaloHit->GetPositionVector().GetDotProduct(localWeightedDirection) < evtProjectedVtxPos)
+            if ((pCaloHit->GetPositionVector() - minFitPos).GetDotProduct(clusterAxis) < projVertexPos)
             {
                 localBeforeVtxHitEnergy += pCaloHit->GetElectromagneticEnergy();
                 ++localBeforeVtxHitCount;
             }
+            
             else
             {
                 localAfterVtxHitEnergy += pCaloHit->GetElectromagneticEnergy();
                 ++localAfterVtxHitCount;
             }
         }
+        
+        if (useEnergyMetrics)
+            energyAsymmetryVec.emplace_back(std::fabs((localAfterVtxHitEnergy - localBeforeVtxHitEnergy)), localAfterVtxHitEnergy + localBeforeVtxHitEnergy);
+            
+        else
+        {
+            if (0 == (localAfterVtxHitCount + localBeforeVtxHitCount))
+                throw StatusCodeException(STATUS_CODE_FAILURE);
+                
+            energyAsymmetryVec.emplace_back(std::fabs((static_cast<float>(localAfterVtxHitCount) - static_cast<float>(localBeforeVtxHitCount))), 
+                                            static_cast<float>(localAfterVtxHitCount) + static_cast<float>(localBeforeVtxHitCount));
+        }
     }
-
+    
+    if (!energyAsymmetryVec.empty())
+    {
+        std::sort(energyAsymmetryVec.begin(), energyAsymmetryVec.end(), [](const std::pair<float, float> &lhs, const std::pair<float, float> &rhs){ return lhs.first > rhs.first; });
+        localEnergyAsymmetry += energyAsymmetryVec.front().first / energyAsymmetryVec.front().second;
+    }
+    
     // Use energy metrics if possible, otherwise fall back on hit counting.
     const float totHitEnergy(beforeVtxHitEnergy + afterVtxHitEnergy);
-    const float localTotHitEnergy(localBeforeVtxHitEnergy + localAfterVtxHitEnergy);
     const unsigned int totHitCount(beforeVtxHitCount + afterVtxHitCount);
-    const unsigned int localTotHitCount(localBeforeVtxHitCount + localAfterVtxHitCount);
     
     if (useEnergyMetrics)
-    {
         energyAsymmetry += std::fabs((afterVtxHitEnergy - beforeVtxHitEnergy)) / totHitEnergy;
-        localEnergyAsymmetry += std::fabs((localAfterVtxHitEnergy - localBeforeVtxHitEnergy)) / localTotHitEnergy;
-    }
     
     else
     {
@@ -328,7 +365,6 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyAsymmetry(float &energyA
             throw StatusCodeException(STATUS_CODE_FAILURE);
             
         energyAsymmetry += std::fabs((static_cast<float>(afterVtxHitCount) - static_cast<float>(beforeVtxHitCount))) / static_cast<float>(totHitCount);
-        localEnergyAsymmetry += std::fabs((static_cast<float>(localAfterVtxHitCount) - static_cast<float>(localBeforeVtxHitCount))) / static_cast<float>(localTotHitCount);
     }
 }
 
@@ -390,6 +426,9 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "MaxAsymmetryDistance", m_maxAsymmetryDistance));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "LocalMaxAsymmetryDistance", m_localMaxAsymmetryDistance));
         
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "BeamDeweightingConstant", m_beamDeweightingConstant));
