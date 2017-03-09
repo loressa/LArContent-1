@@ -579,6 +579,18 @@ void EventValidationAlgorithm::WriteAllOutput(const MCParticleVector &mcNeutrino
         mcNeutrinoPX = pMCNeutrino->GetMomentum().GetX();
         mcNeutrinoPY = pMCNeutrino->GetMomentum().GetY();
         mcNeutrinoPZ = pMCNeutrino->GetMomentum().GetZ();
+        
+        // Jack
+        /*
+        const CartesianVector mcVtxPosU(LArGeometryHelper::ProjectPosition(this->GetPandora(), pMCNeutrino->GetEndpoint(), TPC_VIEW_U));
+        const CartesianVector mcVtxPosV(LArGeometryHelper::ProjectPosition(this->GetPandora(), pMCNeutrino->GetEndpoint(), TPC_VIEW_V));
+        const CartesianVector mcVtxPosW(LArGeometryHelper::ProjectPosition(this->GetPandora(), pMCNeutrino->GetEndpoint(), TPC_VIEW_W));
+        
+        PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &mcVtxPosU, "MC_VTX_U", GREEN, 1);
+        PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &mcVtxPosV, "MC_VTX_V", GREEN, 1);
+        PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &mcVtxPosW, "MC_VTX_W", GREEN, 1);
+*/
+        // -------------
 
         const LArMCParticle *const pLArMCNeutrino = dynamic_cast<const LArMCParticle*>(pMCNeutrino);
 
@@ -604,6 +616,18 @@ void EventValidationAlgorithm::WriteAllOutput(const MCParticleVector &mcNeutrino
             recoNeutrinoVtxY = pVertex->GetPosition().GetY();
             recoNeutrinoVtxZ = pVertex->GetPosition().GetZ();
         }
+        
+        // Jack
+    /*
+        const CartesianVector recoVtxPosU(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_U));
+        const CartesianVector recoVtxPosV(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_V));
+        const CartesianVector recoVtxPosW(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W));
+        
+        PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &recoVtxPosU, "RECO_VTX_U", RED, 1);
+        PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &recoVtxPosV, "RECO_VTX_V", RED, 1);
+        PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &recoVtxPosW, "RECO_VTX_W", RED, 1);
+*/
+        // -------------
 
         CaloHitList allRecoNeutrinoHits, allRecoOtherHits;
         this->GetNeutrinoHitOrigins(pPfo, allRecoNeutrinoHits, allRecoOtherHits);

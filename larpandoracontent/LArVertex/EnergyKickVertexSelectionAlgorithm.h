@@ -49,6 +49,8 @@ private:
          */
         SlidingFitData(const pandora::Cluster *const pCluster, const int slidingFitWindow, const float slidingFitPitch);
         
+        SlidingFitData() : m_minLayerDirection(0.f, 0.f, 0.f), m_maxLayerDirection(0.f, 0.f, 0.f), m_minLayerPosition(0.f, 0.f, 0.f), m_maxLayerPosition(0.f, 0.f, 0.f), m_pCluster(NULL) {};
+        
         /**
          *  @brief  Get the min layer direction
          * 
@@ -94,8 +96,40 @@ private:
 
     typedef std::vector<SlidingFitData> SlidingFitDataList;
 
+
+     /**
+     *  @brief Sliding fit data class.
+     */
+    class ShowerCluster
+    {
+    public:
+        /**
+         *  @brief  Constructor
+         * 
+         *  @param  pCluster pointer to the cluster
+         *  @param  slidingFitWindow the sliding fit window
+         *  @param  slidingFitPitch the sliding fit pitch
+         */
+        ShowerCluster(const pandora::ClusterList &clusterList);
+        
+        /**
+         *  @brief  Get a pointer to the corresponding cluster
+         * 
+         *  @return pointer to the corresponding cluster
+         */
+        pandora::ClusterList GetClusters() const;
+
+    private:
+        pandora::ClusterList        m_clusterList;             ///< Pointer to the corresponding cluster
+    };
+
+    typedef std::map<const pandora::Cluster *, ShowerCluster> ShowerClusterMap;
+    typedef std::vector<ShowerCluster> ShowerClusterList;
+
     void GetVertexScoreList(const pandora::VertexVector &vertexVector, const BeamConstants &beamConstants, HitKDTree2D &kdTreeU,
         HitKDTree2D &kdTreeV, HitKDTree2D &kdTreeW, VertexScoreList &vertexScoreList) const;
+        
+    ShowerClusterMap CalculateShowerClusterMap(const SlidingFitDataList &slidingFitDataList) const;
 
     /**
      *  @brief  Calculate the sliding fits data objects for the clusters in a given view
@@ -117,7 +151,7 @@ private:
      *  @return the energy score
      */
     void IncrementEnergyScoresForView(const pandora::CartesianVector &vertexPosition2D, float &energyKick, float &energyAsymmetry, float &localEnergyAsymmetry,
-        const SlidingFitDataList &slidingFitDataList) const;
+        const SlidingFitDataList &slidingFitDataList, const ShowerClusterMap &showerClusterMap, pandora::HitType hitType) const;
 
     /**
      *  @brief  Increment the parameters used to calculate the energy kick for a given cluster
@@ -131,8 +165,9 @@ private:
      *  @param  totHits the total number of hits to increment
      */
     void IncrementEnergyKickParameters(const pandora::Cluster *const pCluster, const pandora::CartesianVector &clusterDisplacement,
-        const pandora::CartesianVector &clusterDirection, float &totEnergyKick, float &totEnergy, float &totHitKick, unsigned int &totHits) const;
+        const pandora::CartesianVector &clusterDirection, float &totEnergyKick, float &totEnergy, float &totHitKick, unsigned int &totHits, const SlidingFitDataList &closeSlidingFitData, const ShowerClusterMap &showerClusterMap, pandora::HitType hitType) const;
 
+    float IsClusterShowerLike(const pandora::Cluster *const pCluster, const SlidingFitDataList &closeSlidingFitData, const ShowerClusterMap &showerClusterMap, pandora::HitType hitType) const;
     bool IsClusterShowerLike(const pandora::Cluster *const pCluster) const;
 
     /**
@@ -154,7 +189,7 @@ private:
      *  @param  slidingFitDataList the list of sliding fits for all the 2D clusters
      *  @param  localWeightedDirection current local event axis using energy or hit weighting
      */
-    void IncrementEnergyAsymmetry(float &energyAsymmetry, float &localEnergyAsymmetry, const pandora::ClusterList &localAsymmetryClusterList, const bool useEnergyMetrics, const pandora::CartesianVector &vertexPosition2D,
+    void IncrementEnergyAsymmetry(float &energyAsymmetry, float &localEnergyAsymmetry, pandora::ClusterList &localAsymmetryClusterList, const bool useEnergyMetrics, const pandora::CartesianVector &vertexPosition2D,
         const SlidingFitDataList &slidingFitDataList, const pandora::CartesianVector &localWeightedDirection) const;
 
     pandora::StatusCode ReadSettings(const pandora::TiXmlHandle xmlHandle);
@@ -169,9 +204,9 @@ private:
 
     float                   m_asymmetryConstant;            ///< The asymmetry constant parameter in the energy score
     float                   m_maxAsymmetryDistance;         ///< The max distance between cluster (any hit) and vertex to calculate asymmetry score
-    float                   m_localMaxAsymmetryDistance;    ///< ...
     
     float                   m_localAsymmetryConstant;       ///< ...
+    unsigned int            m_minLocalAsymmetryClusterHits; ///< ...
     bool                    m_useLocalAsymmetry;            ///< ...
 
     float                   m_beamDeweightingConstant;      ///< ...
@@ -181,6 +216,12 @@ private:
     
     bool                    m_useClusterCharacterisation;   ///< ...
     float                   m_maxTrackLikeDeviation;        ///< ...
+    
+    float m_showerClusteringDistance;
+    
+    float m_showerAngleConstant;
+    float m_showerDistanceConstant;
+    float m_vertexClusterDistance;
 };
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -224,6 +265,13 @@ inline const pandora::CartesianVector &EnergyKickVertexSelectionAlgorithm::Slidi
 inline const pandora::Cluster *EnergyKickVertexSelectionAlgorithm::SlidingFitData::GetCluster() const
 {
     return m_pCluster;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+inline pandora::ClusterList EnergyKickVertexSelectionAlgorithm::ShowerCluster::GetClusters() const
+{
+    return m_clusterList;
 }
 
 } // namespace lar_content
