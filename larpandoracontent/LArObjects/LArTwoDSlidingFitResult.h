@@ -32,6 +32,8 @@ public:
      */
     TwoDSlidingFitResult(const pandora::Cluster *const pCluster, const unsigned int layerFitHalfWindow, const float layerPitch);
 
+    TwoDSlidingFitResult(const pandora::ClusterVector &clusterVector, const unsigned int layerFitHalfWindow, const float layerPitch);
+
     /**
      *  @brief  Constructor using specified primary axis. The orthogonal axis must be perpendicular to the primary axis.
      *
