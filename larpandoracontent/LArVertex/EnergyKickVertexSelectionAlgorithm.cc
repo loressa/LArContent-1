@@ -50,7 +50,6 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_closestSlidingFitCanBeShowers(false),
     m_noLocalShowerAsymmetry(false),
     m_useShowerClusteringApproximation(false),
-    m_useClosestShowerCluster(false),
     m_useShowerClusterNumber(false)
     
     
@@ -231,7 +230,7 @@ void EnergyKickVertexSelectionAlgorithm::CalculateClusterSlidingFits(SlidingFitD
 
     for (const Cluster * const pCluster : sortedClusters)
     {
-        if (m_useClosestShowerCluster && this->IsClusterShowerLike(pCluster))
+        if (m_closestSlidingFitCanBeShowers && this->IsClusterShowerLike(pCluster))
             continue;
         
         if (pCluster->GetNCaloHits() < m_minClusterCaloHits)
@@ -252,7 +251,7 @@ void EnergyKickVertexSelectionAlgorithm::CalculateClusterSlidingFits(SlidingFitD
         singleClusterSlidingFitDataList.emplace_back(pCluster, slidingFitWindow, slidingFitPitch);
     }
     
-    if (m_useClosestShowerCluster)
+    if (m_closestSlidingFitCanBeShowers)
     {
         for (const ShowerCluster &showerCluster : showerClusterList)
         {        
@@ -871,9 +870,6 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
     
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "UseShowerClusteringApproximation", m_useShowerClusteringApproximation));   
-    
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "UseClosestShowerCluster", m_useClosestShowerCluster));  
         
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "UseShowerClusterNumber", m_useShowerClusterNumber));  
