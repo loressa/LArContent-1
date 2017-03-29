@@ -14,8 +14,12 @@
 
 #include "larpandoracontent/LArVertex/EnergyKickVertexSelectionAlgorithm.h"
 
+#include "larpandoracontent/LArUtility/KDTreeLinkerAlgoT.h"
 
 #include "larpandoracontent/LArHelpers/LArMCParticleHelper.h" 
+#include "larpandoracontent/LArObjects/LArMCParticle.h"
+
+#include <fstream>
 
 using namespace pandora;
 
@@ -23,52 +27,74 @@ namespace lar_content
 {
 
 EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
-    m_minClusterCaloHits(12), // CHANGE DEFAULTS
+    m_minClusterCaloHits(12),
     m_slidingFitWindow(100),
     m_rOffset(10.f),
     m_xOffset(0.06),
     m_epsilon(0.06),
-    m_asymmetryConstant(3.f),
     m_maxAsymmetryDistance(5.f),
     m_minAsymmetryCosAngle(0.9962),
     m_maxAsymmetryNClusters(2),
-    
-    m_beamDeweightingConstant(0.4), // 0.8),
     m_showerDeweightingConstant(1.f),
     m_showerCollapsingConstant(1.f),
     m_minShowerSpineLength(15.f),
     m_showerClusteringDistance(3.f),
-    m_showerAngleConstant(0.f),
-    m_showerDistanceConstant(0.f),
     m_vertexClusterDistance(4.f),
-    m_tempShowerLikeStrength(0.f),
-    m_globalAsymmetryConstant(1.f),
-    m_useGlobalEnergyAsymmetry(true),
-    m_showerAsymmetryConstant(1.f), // change me
-    m_useShowerEnergyAsymmetry(true), // change me?
-    m_showerClusterNumberConstant(1.f),
-    m_minShowerInwardnessDistance(1.5),
-    m_showerInwardnessConstant(0.f),
-    m_minShowerClusterHits(1),// 10),
-    m_closestSlidingFitCanBeShowers(true),
-    m_noLocalShowerAsymmetry(false),
-    m_useShowerClusteringApproximation(false),
-    m_useShowerClusterNumber(false),
+    m_minShowerClusterHits(1),
+    m_useShowerClusteringApproximation(false),    
+    m_cheatTrackShowerId(false),
     
-    m_useHitCountingError(false),
-    m_useHitCounting(false),
-    m_cheatTrackShowerId(false)
-    
-    
-    
+    m_fastScoreCheck(true),
+    m_fastScoreOnly(false),
+    m_fullScore(true),
+    m_kernelEstimateSigma(0.048f),
+    m_kappa(0.42f),
+    m_maxHitVertexDisplacement1D(100.f),
+    m_minFastScoreFraction(0.8f),
+    m_fastHistogramNPhiBins(200),
+    m_fastHistogramPhiMin(-1.1f * M_PI),
+    m_fastHistogramPhiMax(+1.1f * M_PI),
+    m_enableFolding(true)
 {
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
 void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexVector, const BeamConstants &beamConstants,
-    HitKDTree2D &/*kdTreeU*/, HitKDTree2D &/*kdTreeV*/, HitKDTree2D &/*kdTreeW*/, VertexScoreList &vertexScoreList) const
+    HitKDTree2D &kdTreeU, HitKDTree2D &kdTreeV, HitKDTree2D &kdTreeW, VertexScoreList &vertexScoreList) const
 {
+    
+    // Extract input collections
+    const MCParticleList *pMCParticleList = nullptr;
+    PandoraContentApi::GetList(*this, m_mcParticleListName, pMCParticleList);
+    
+    const CaloHitList *pCaloHitList = nullptr;
+    PandoraContentApi::GetList(*this, m_caloHitListName, pCaloHitList);
+    
+    // Obtain vector: true neutrinos
+    MCParticleVector mcNeutrinoVector;
+    this->SelectTrueNeutrinos(pMCParticleList, mcNeutrinoVector);
+    
+    // Obtain map: [mc particle -> primary mc particle]
+    LArMCParticleHelper::MCRelationMap mcToPrimaryMCMap;
+    LArMCParticleHelper::GetMCPrimaryMap(pMCParticleList, mcToPrimaryMCMap);
+    
+    // Remove non-reconstructable hits, e.g. those downstream of a neutron
+    CaloHitList selectedCaloHitList;
+    this->SelectCaloHits(pCaloHitList, mcToPrimaryMCMap, selectedCaloHitList);
+    
+    // Remove shared hits where target particle deposits below threshold energy fraction
+    CaloHitList goodCaloHitList;
+    this->SelectGoodCaloHits(&selectedCaloHitList, mcToPrimaryMCMap, goodCaloHitList);
+
+    // Obtain maps: [good hit -> primary mc particle], [primary mc particle -> list of good hits]
+    LArMonitoringHelper::CaloHitToMCMap goodHitToPrimaryMCMap;
+    LArMonitoringHelper::MCContributionMap mcToGoodTrueHitListMap;
+    LArMonitoringHelper::GetMCParticleToCaloHitMatches(&goodCaloHitList, mcToPrimaryMCMap, goodHitToPrimaryMCMap, mcToGoodTrueHitListMap);
+    
+    VertexScoreList tmpVertexScoreList;
+    
+    
     ClusterList clustersU, clustersV, clustersW;
 
     for (const std::string &clusterListName : m_inputClusterListNames)
@@ -94,45 +120,617 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
     }
     
     ShowerClusterMap showerClusterMapU, showerClusterMapV, showerClusterMapW;
-    ShowerClusterList showerClusterListU, showerClusterListV, showerClusterListW;
+ 
+    this->CalculateShowerClusterMap(clustersU, showerClusterMapU);
+    this->CalculateShowerClusterMap(clustersV, showerClusterMapV);
+    this->CalculateShowerClusterMap(clustersW, showerClusterMapW);
     
-    if (m_tempShowerLikeStrength != 0.f || m_useShowerEnergyAsymmetry)
-    {
-        this->CalculateShowerClusterMap(clustersU, showerClusterListU, showerClusterMapU);
-        this->CalculateShowerClusterMap(clustersV, showerClusterListV, showerClusterMapV);
-        this->CalculateShowerClusterMap(clustersW, showerClusterListW, showerClusterMapW);
-    }
+    SlidingFitDataList singleClusterSlidingFitDataListU, singleClusterSlidingFitDataListV, singleClusterSlidingFitDataListW;
     
-    SlidingFitDataList slidingFitDataListU, slidingFitDataListV, slidingFitDataListW, singleClusterSlidingFitDataListU, singleClusterSlidingFitDataListV, singleClusterSlidingFitDataListW;
+    this->CalculateClusterSlidingFits(clustersU, singleClusterSlidingFitDataListU);
+    this->CalculateClusterSlidingFits(clustersV, singleClusterSlidingFitDataListV);
+    this->CalculateClusterSlidingFits(clustersW, singleClusterSlidingFitDataListW);
     
-    this->CalculateClusterSlidingFits(slidingFitDataListU, clustersU, showerClusterListU, singleClusterSlidingFitDataListU);
-    this->CalculateClusterSlidingFits(slidingFitDataListV, clustersV, showerClusterListV, singleClusterSlidingFitDataListV);
-    this->CalculateClusterSlidingFits(slidingFitDataListW, clustersW, showerClusterListW, singleClusterSlidingFitDataListW);
+    const float eventHitShoweryness = this->GetEventHitShoweryness(clustersU, clustersV, clustersW);
+    const float eventClusterShoweryness = this->GetEventClusterShoweryness(clustersU, clustersV, clustersW);
+    
+    float bestFastScore(0.f);
+    float rPhiScore(0.f);
     
     for (const Vertex *const pVertex : vertexVector)
     {
         const float vertexMinZ(std::max(pVertex->GetPosition().GetZ(), beamConstants.GetMinZCoordinate()));
-        const float beamDeweightingScore(this->IsBeamModeOn() ? (-(vertexMinZ - beamConstants.GetMinZCoordinate()) * beamConstants.GetDecayConstant() / m_beamDeweightingConstant) : 0.f);
+        const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(-(vertexMinZ - beamConstants.GetMinZCoordinate()) * beamConstants.GetDecayConstant()) : 1.f);
 
         float energyKick(0.f), energyAsymmetry(0.f), globalEnergyAsymmetry(0.f), showerEnergyAsymmetry(0.f);
-        this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_U), energyKick, energyAsymmetry, globalEnergyAsymmetry, slidingFitDataListU, showerClusterMapU, showerEnergyAsymmetry, singleClusterSlidingFitDataListU);
-        this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_V), energyKick, energyAsymmetry, globalEnergyAsymmetry, slidingFitDataListV, showerClusterMapV, showerEnergyAsymmetry, singleClusterSlidingFitDataListV);
-        this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W), energyKick, energyAsymmetry, globalEnergyAsymmetry, slidingFitDataListW, showerClusterMapW, showerEnergyAsymmetry, singleClusterSlidingFitDataListW);
+        this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_U), energyKick, energyAsymmetry, globalEnergyAsymmetry, showerClusterMapU, showerEnergyAsymmetry, singleClusterSlidingFitDataListU);
+        this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_V), energyKick, energyAsymmetry, globalEnergyAsymmetry, showerClusterMapV, showerEnergyAsymmetry, singleClusterSlidingFitDataListV);
+        this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W), energyKick, energyAsymmetry, globalEnergyAsymmetry, showerClusterMapW, showerEnergyAsymmetry, singleClusterSlidingFitDataListW);
 
-        const float energyKickScore(-energyKick / m_epsilon);
-        const float energyAsymmetryScore(energyAsymmetry / m_asymmetryConstant);
-        const float globalEnergyAsymmetryScore(m_useGlobalEnergyAsymmetry ? globalEnergyAsymmetry / m_globalAsymmetryConstant : 0.f);
-        const float showerEnergyAsymmetryScore(m_useShowerEnergyAsymmetry ? showerEnergyAsymmetry / m_showerAsymmetryConstant : 0.f);
+        tmpVertexScoreList
 
-        vertexScoreList.emplace_back(pVertex, beamDeweightingScore + energyKickScore + energyAsymmetryScore + globalEnergyAsymmetryScore + showerEnergyAsymmetryScore);
+        energyAsymmetry /= 3.f;
+        globalEnergyAsymmetry /= 3.f;
+        showerEnergyAsymmetry /= 3.f;
+        energyKick /= 3.f;
+
+        (void) vertexScoreList;
+
+        //-------------------------------------------------------------------------------------------------------------------------------
+        
+        KernelEstimate kernelEstimateU(m_kernelEstimateSigma);
+        KernelEstimate kernelEstimateV(m_kernelEstimateSigma);
+        KernelEstimate kernelEstimateW(m_kernelEstimateSigma);
+
+        this->FillKernelEstimate(pVertex, TPC_VIEW_U, kdTreeU, kernelEstimateU);
+        this->FillKernelEstimate(pVertex, TPC_VIEW_V, kdTreeV, kernelEstimateV);
+        this->FillKernelEstimate(pVertex, TPC_VIEW_W, kdTreeW, kernelEstimateW);
+        
+        bool done(false);
+        
+        if (m_fastScoreCheck || m_fastScoreOnly)
+        {
+            const float fastScore(this->GetFastScore(kernelEstimateU, kernelEstimateV, kernelEstimateW));
+
+            if (false)//m_fastScoreOnly)
+            {
+                rPhiScore = fastScore;
+                done = true;
+            }
+
+            //if (fastScore < m_minFastScoreFraction * bestFastScore)
+           // {
+            //    rPhiScore = 0.f;
+            //    done = true;
+           // }
+
+            if (fastScore > bestFastScore)
+                bestFastScore = fastScore;
+        }
+        
+        if (!m_fastScoreOnly && !done)
+        {
+            rPhiScore = m_fullScore ? this->GetFullScore(kernelEstimateU, kernelEstimateV, kernelEstimateW) :
+                                      this->GetMidwayScore(kernelEstimateU, kernelEstimateV, kernelEstimateW);
+        }
+        
+        //-------------------------------------------------------------------------------------------------------------------------------
+        std::string interactionType;
+        float mcVertexDr(std::numeric_limits<float>::max());
+        for (const MCParticle *const pMCNeutrino : mcNeutrinoVector)
+        {
+            const CartesianVector mcNeutrinoPosition(pMCNeutrino->GetEndpoint());
+            const float dr = (mcNeutrinoPosition - pVertex->GetPosition()).GetMagnitude();
+            
+            if (dr < mcVertexDr)
+            {
+                mcVertexDr = dr;
+                
+                const LArMCParticle *const pLArMCNeutrino = dynamic_cast<const LArMCParticle*>(pMCNeutrino);
+
+                if (pLArMCNeutrino)
+                    interactionType = this->ToString(this->GetInteractionType(pLArMCNeutrino, pMCParticleList, mcToGoodTrueHitListMap));
+            }
+        }
+
+    
+    
+        //-------------------------------------------------------------------------------------------------------------------------------
+        
+        if (mcVertexDr != std::numeric_limits<float>::max())
+        {
+            /*
+            std::cout << "Beam deweighting:          " << beamDeweightingScore << std::endl;
+            std::cout << "r/phi:                     " << rPhiScore << std::endl;
+            std::cout << "Energy kick:               " << energyKick << std::endl;
+            std::cout << "Energy asymmetry:          " << energyAsymmetry << std::endl;
+            std::cout << "Global energy asym:        " << globalEnergyAsymmetry << std::endl;
+            std::cout << "Shower energy asym:        " << showerEnergyAsymmetry << std::endl;
+            std::cout << "Event hit showeryness:     " << eventHitShoweryness << std::endl;
+            std::cout << "Event cluster showeryness: " << eventClusterShoweryness << std::endl;
+            std::cout << "    => Vertex dr:          " << mcVertexDr << std::endl;
+            std::cout << "Interaction type:          " << interactionType << std::endl;
+            std::cout << std::endl;
+            
+            std::cout << m_trainingSetPrefix + interactionType + "_outputs.txt" << std::endl;
+            */
+            
+            std::ofstream inputsFile;
+            inputsFile.open(m_trainingSetPrefix + interactionType + "_inputs.txt", std::ios_base::app);
+            inputsFile << beamDeweightingScore << " " << rPhiScore << " " << energyKick << " " << energyAsymmetry << " " << globalEnergyAsymmetry <<
+                        " " << showerEnergyAsymmetry << " " << eventHitShoweryness << " " << eventClusterShoweryness << "\n"; 
+            
+            std::ofstream outputsFile;
+            outputsFile.open(m_trainingSetPrefix + interactionType + "_outputs.txt", std::ios_base::app);
+            outputsFile << mcVertexDr << "\n";
+            
+        }
+    }
+
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+
+void EnergyKickVertexSelectionAlgorithm::SelectCaloHits(const CaloHitList *const pCaloHitList, const LArMCParticleHelper::MCRelationMap &mcToPrimaryMCMap,
+    CaloHitList &selectedCaloHitList) const
+{
+    for (const CaloHit *const pCaloHit : *pCaloHitList)
+    {
+        try
+        {
+            const MCParticle *const pHitParticle(MCParticleHelper::GetMainMCParticle(pCaloHit));
+
+            LArMCParticleHelper::MCRelationMap::const_iterator mcIter = mcToPrimaryMCMap.find(pHitParticle);
+
+            if (mcToPrimaryMCMap.end() == mcIter)
+                continue;
+
+            const MCParticle *const pPrimaryParticle = mcIter->second;
+
+            if (this->PassMCParticleChecks(pPrimaryParticle, pPrimaryParticle, pHitParticle))
+                selectedCaloHitList.push_back(pCaloHit);
+        }
+        catch (const StatusCodeException &)
+        {
+        }
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+bool EnergyKickVertexSelectionAlgorithm::PassMCParticleChecks(const MCParticle *const pOriginalPrimary, const MCParticle *const pThisMCParticle,
+    const MCParticle *const pHitMCParticle) const
+{
+    if (NEUTRON == std::abs(pThisMCParticle->GetParticleId()))
+        return false;
+
+    if ((PHOTON == pThisMCParticle->GetParticleId()) && (PHOTON != pOriginalPrimary->GetParticleId()) && (E_MINUS != std::abs(pOriginalPrimary->GetParticleId())))
+    {
+        if ((pThisMCParticle->GetEndpoint() - pThisMCParticle->GetVertex()).GetMagnitude() > 2.5f)
+            return false;
+    }
+
+    if (pThisMCParticle == pHitMCParticle)
+        return true;
+
+    for (const MCParticle *const pDaughterMCParticle : pThisMCParticle->GetDaughterList())
+    {
+        if (this->PassMCParticleChecks(pOriginalPrimary, pDaughterMCParticle, pHitMCParticle))
+            return true;
+    }
+
+    return false;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void EnergyKickVertexSelectionAlgorithm::SelectGoodCaloHits(const CaloHitList *const pSelectedCaloHitList, const LArMCParticleHelper::MCRelationMap &mcToPrimaryMCMap,
+    CaloHitList &selectedGoodCaloHitList) const
+{
+    for (const CaloHit *const pCaloHit : *pSelectedCaloHitList)
+    {
+        MCParticleVector mcParticleVector;
+        for (const auto &mapEntry : pCaloHit->GetMCParticleWeightMap()) mcParticleVector.push_back(mapEntry.first);
+        std::sort(mcParticleVector.begin(), mcParticleVector.end(), PointerLessThan<MCParticle>());
+
+        MCParticleWeightMap primaryWeightMap;
+
+        for (const MCParticle *const pMCParticle : mcParticleVector)
+        {
+            const float weight(pCaloHit->GetMCParticleWeightMap().at(pMCParticle));
+            LArMCParticleHelper::MCRelationMap::const_iterator mcIter = mcToPrimaryMCMap.find(pMCParticle);
+
+            if (mcToPrimaryMCMap.end() != mcIter)
+                primaryWeightMap[mcIter->second] += weight;
+        }
+
+        MCParticleVector mcPrimaryVector;
+        for (const auto &mapEntry : primaryWeightMap) mcPrimaryVector.push_back(mapEntry.first);
+        std::sort(mcPrimaryVector.begin(), mcPrimaryVector.end(), PointerLessThan<MCParticle>());
+
+        const MCParticle *pBestPrimaryParticle(nullptr);
+        float bestPrimaryWeight(0.f), primaryWeightSum(0.f);
+
+        for (const MCParticle *const pPrimaryMCParticle : mcPrimaryVector)
+        {
+            const float primaryWeight(primaryWeightMap.at(pPrimaryMCParticle));
+            primaryWeightSum += primaryWeight;
+
+            if (primaryWeight > bestPrimaryWeight)
+            {
+                bestPrimaryWeight = primaryWeight;
+                pBestPrimaryParticle = pPrimaryMCParticle;
+            }
+        }
+
+        if (!pBestPrimaryParticle || (primaryWeightSum < std::numeric_limits<float>::epsilon()) || ((bestPrimaryWeight / primaryWeightSum) < 0.9f))
+            continue;
+
+        selectedGoodCaloHitList.push_back(pCaloHit);
+    }
+}
+
+EnergyKickVertexSelectionAlgorithm::InteractionType EnergyKickVertexSelectionAlgorithm::GetInteractionType(const LArMCParticle *const pLArMCNeutrino, const MCParticleList *pMCParticleList, const LArMonitoringHelper::MCContributionMap &mcToGoodTrueHitListMap) const
+{
+    // Obtain vector: primary mc particles
+    MCParticleVector mcPrimaryVector;
+    LArMCParticleHelper::GetPrimaryMCParticleList(pMCParticleList, mcPrimaryVector);
+    
+    unsigned int nNonNeutrons(0), nMuons(0), nElectrons(0), nProtons(0), nPiPlus(0), nPiMinus(0), nNeutrons(0), nPhotons(0);
+    
+    for (const auto pMCPrimary : mcPrimaryVector)
+    {
+        LArMonitoringHelper::MCContributionMap::const_iterator goodTrueHitsIter = mcToGoodTrueHitListMap.find(pMCPrimary);
+
+        if (mcToGoodTrueHitListMap.end() != goodTrueHitsIter)
+        {
+            const CaloHitList &caloHitList(goodTrueHitsIter->second);
+            if (caloHitList.size() < 15)
+                continue;
+                
+            int nGoodViews(0);
+            if (LArMonitoringHelper::CountHitsByType(TPC_VIEW_U, caloHitList) >= 5)
+                ++nGoodViews;
+            
+            if (LArMonitoringHelper::CountHitsByType(TPC_VIEW_V, caloHitList) >= 5)
+                ++nGoodViews; 
+                
+            if (LArMonitoringHelper::CountHitsByType(TPC_VIEW_W, caloHitList) >= 5)
+                ++nGoodViews;
+                
+            if (nGoodViews < 2)
+                continue;
+                
+        }
+        
+        //if (!this->IsGoodMCPrimary(pMCPrimary))
+        //    continue;
+        
+        if (2112 != pMCPrimary->GetParticleId()) ++nNonNeutrons;
+
+        if (13 == pMCPrimary->GetParticleId()) ++nMuons;
+        if (11 == pMCPrimary->GetParticleId()) ++nElectrons;
+        else if (2212 == pMCPrimary->GetParticleId()) ++nProtons;
+        else if (22 == pMCPrimary->GetParticleId()) ++nPhotons;
+        else if (211 == pMCPrimary->GetParticleId()) ++nPiPlus;
+        else if (-211 == pMCPrimary->GetParticleId()) ++nPiMinus;
+        else if (2112 == pMCPrimary->GetParticleId()) ++nNeutrons;
+    }
+
+    if (1098 == pLArMCNeutrino->GetNuanceCode()) return NU_E_SCATTERING;
+
+    if (1001 == pLArMCNeutrino->GetNuanceCode())
+    {
+        if ((1 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons)) return CCQEL_MU;
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons)) return CCQEL_MU_P;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons)) return CCQEL_MU_P_P;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons)) return CCQEL_MU_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons)) return CCQEL_MU_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons)) return CCQEL_MU_P_P_P_P_P;
+
+        if ((1 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons)) return CCQEL_E;
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons)) return CCQEL_E_P;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons)) return CCQEL_E_P_P;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons)) return CCQEL_E_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons)) return CCQEL_E_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons)) return CCQEL_E_P_P_P_P_P;
+    }
+
+    if (1002 == pLArMCNeutrino->GetNuanceCode())
+    {
+        if ((1 == nNonNeutrons) && (1 == nProtons)) return NCQEL_P;
+        if ((2 == nNonNeutrons) && (2 == nProtons)) return NCQEL_P_P;
+        if ((3 == nNonNeutrons) && (3 == nProtons)) return NCQEL_P_P_P;
+        if ((4 == nNonNeutrons) && (4 == nProtons)) return NCQEL_P_P_P_P;
+        if ((5 == nNonNeutrons) && (5 == nProtons)) return NCQEL_P_P_P_P_P;
+    }
+
+    if ((pLArMCNeutrino->GetNuanceCode() >= 1003) && (pLArMCNeutrino->GetNuanceCode() <= 1005))
+    {
+        if ((1 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons)) return CCRES_MU;
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons)) return CCRES_MU_P;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons)) return CCRES_MU_P_P;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons)) return CCRES_MU_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons)) return CCRES_MU_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons)) return CCRES_MU_P_P_P_P_P;
+
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons) && (1 == nPiPlus)) return CCRES_MU_PIPLUS;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_PIPLUS;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_PIPLUS;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_P_PIPLUS;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_P_P_PIPLUS;
+        if ((7 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_P_P_P_PIPLUS;
+
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons) && (1 == nPhotons)) return CCRES_MU_PHOTON;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_PHOTON;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_PHOTON;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_P_PHOTON;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_P_P_PHOTON;
+        if ((7 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_P_P_P_PHOTON;
+
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons) && (2 == nPhotons)) return CCRES_MU_PIZERO;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_PIZERO;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_PIZERO;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_P_PIZERO;
+        if ((7 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_P_P_PIZERO;
+        if ((8 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_P_P_P_PIZERO;
+
+        if ((1 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons)) return CCRES_E;
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons)) return CCRES_E_P;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons)) return CCRES_E_P_P;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons)) return CCRES_E_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons)) return CCRES_E_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons)) return CCRES_E_P_P_P_P_P;
+
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons) && (1 == nPiPlus)) return CCRES_E_PIPLUS;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_PIPLUS;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_PIPLUS;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_P_PIPLUS;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_P_P_PIPLUS;
+        if ((7 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_P_P_P_PIPLUS;
+
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons) && (1 == nPhotons)) return CCRES_E_PHOTON;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons) && (1 == nPhotons)) return CCRES_E_P_PHOTON;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_PHOTON;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_P_PHOTON;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_P_P_PHOTON;
+        if ((7 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_P_P_P_PHOTON;
+
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons) && (2 == nPhotons)) return CCRES_E_PIZERO;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons) && (2 == nPhotons)) return CCRES_E_P_PIZERO;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_PIZERO;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_P_PIZERO;
+        if ((7 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_P_P_PIZERO;
+        if ((8 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_P_P_P_PIZERO;
+    }
+
+    if ((pLArMCNeutrino->GetNuanceCode() >= 1006) && (pLArMCNeutrino->GetNuanceCode() <= 1009))
+    {
+        if ((1 == nNonNeutrons) && (1 == nProtons)) return NCRES_P;
+        if ((2 == nNonNeutrons) && (2 == nProtons)) return NCRES_P_P;
+        if ((3 == nNonNeutrons) && (3 == nProtons)) return NCRES_P_P_P;
+        if ((4 == nNonNeutrons) && (4 == nProtons)) return NCRES_P_P_P_P;
+        if ((5 == nNonNeutrons) && (5 == nProtons)) return NCRES_P_P_P_P_P;
+
+        if ((1 == nNonNeutrons) && (0 == nProtons) && (1 == nPiPlus)) return NCRES_PIPLUS;
+        if ((2 == nNonNeutrons) && (1 == nProtons) && (1 == nPiPlus)) return NCRES_P_PIPLUS;
+        if ((3 == nNonNeutrons) && (2 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_PIPLUS;
+        if ((4 == nNonNeutrons) && (3 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_P_PIPLUS;
+        if ((5 == nNonNeutrons) && (4 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_P_P_PIPLUS;
+        if ((6 == nNonNeutrons) && (5 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_P_P_P_PIPLUS;
+
+        if ((1 == nNonNeutrons) && (0 == nProtons) && (1 == nPiMinus)) return NCRES_PIMINUS;
+        if ((2 == nNonNeutrons) && (1 == nProtons) && (1 == nPiMinus)) return NCRES_P_PIMINUS;
+        if ((3 == nNonNeutrons) && (2 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_PIMINUS;
+        if ((4 == nNonNeutrons) && (3 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_P_PIMINUS;
+        if ((5 == nNonNeutrons) && (4 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_P_P_PIMINUS;
+        if ((6 == nNonNeutrons) && (5 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_P_P_P_PIMINUS;
+
+        if ((1 == nNonNeutrons) && (0 == nProtons) && (1 == nPhotons)) return NCRES_PHOTON;
+        if ((2 == nNonNeutrons) && (1 == nProtons) && (1 == nPhotons)) return NCRES_P_PHOTON;
+        if ((3 == nNonNeutrons) && (2 == nProtons) && (1 == nPhotons)) return NCRES_P_P_PHOTON;
+        if ((4 == nNonNeutrons) && (3 == nProtons) && (1 == nPhotons)) return NCRES_P_P_P_PHOTON;
+        if ((5 == nNonNeutrons) && (4 == nProtons) && (1 == nPhotons)) return NCRES_P_P_P_P_PHOTON;
+        if ((6 == nNonNeutrons) && (5 == nProtons) && (1 == nPhotons)) return NCRES_P_P_P_P_P_PHOTON;
+
+        if ((2 == nNonNeutrons) && (0 == nProtons) && (2 == nPhotons)) return NCRES_PIZERO;
+        if ((3 == nNonNeutrons) && (1 == nProtons) && (2 == nPhotons)) return NCRES_P_PIZERO;
+        if ((4 == nNonNeutrons) && (2 == nProtons) && (2 == nPhotons)) return NCRES_P_P_PIZERO;
+        if ((5 == nNonNeutrons) && (3 == nProtons) && (2 == nPhotons)) return NCRES_P_P_P_PIZERO;
+        if ((6 == nNonNeutrons) && (4 == nProtons) && (2 == nPhotons)) return NCRES_P_P_P_P_PIZERO;
+        if ((7 == nNonNeutrons) && (5 == nProtons) && (2 == nPhotons)) return NCRES_P_P_P_P_P_PIZERO;
+    }
+
+    if (pLArMCNeutrino->GetNuanceCode() == 1091) return CCDIS;
+    if (pLArMCNeutrino->GetNuanceCode() == 1092) return NCDIS;
+    if (pLArMCNeutrino->GetNuanceCode() == 1096) return NCCOH;
+    if (pLArMCNeutrino->GetNuanceCode() == 1097) return CCCOH;
+
+    return OTHER_INTERACTION;
+}
+
+/**
+ *  @brief  Get string representing interaction type
+ * 
+ *  @param  interactionType
+ * 
+ *  @return the interaction type string
+ */
+std::string EnergyKickVertexSelectionAlgorithm::ToString(const InteractionType interactionType) const
+{
+    switch (interactionType)
+    {
+    case CCQEL_MU: return "CCQEL_MU";
+    case CCQEL_MU_P: return "CCQEL_MU_P";
+    case CCQEL_MU_P_P: return "CCQEL_MU_P_P";
+    case CCQEL_MU_P_P_P: return "CCQEL_MU_P_P_P";
+    case CCQEL_MU_P_P_P_P: return "CCQEL_MU_P_P_P_P";
+    case CCQEL_MU_P_P_P_P_P: return "CCQEL_MU_P_P_P_P_P";
+    case CCQEL_E: return "CCQEL_E";
+    case CCQEL_E_P: return "CCQEL_E_P";
+    case CCQEL_E_P_P: return "CCQEL_E_P_P";
+    case CCQEL_E_P_P_P: return "CCQEL_E_P_P_P";
+    case CCQEL_E_P_P_P_P: return "CCQEL_E_P_P_P_P";
+    case CCQEL_E_P_P_P_P_P: return "CCQEL_E_P_P_P_P_P";
+    case NCQEL_P: return "NCQEL_P";
+    case NCQEL_P_P: return "NCQEL_P_P";
+    case NCQEL_P_P_P: return "NCQEL_P_P_P";
+    case NCQEL_P_P_P_P: return "NCQEL_P_P_P_P";
+    case NCQEL_P_P_P_P_P: return "NCQEL_P_P_P_P_P";
+    case CCRES_MU: return "CCRES_MU";
+    case CCRES_MU_P: return "CCRES_MU_P";
+    case CCRES_MU_P_P: return "CCRES_MU_P_P";
+    case CCRES_MU_P_P_P: return "CCRES_MU_P_P_P";
+    case CCRES_MU_P_P_P_P: return "CCRES_MU_P_P_P_P";
+    case CCRES_MU_P_P_P_P_P: return "CCRES_MU_P_P_P_P_P";
+    case CCRES_MU_PIPLUS: return "CCRES_MU_PIPLUS";
+    case CCRES_MU_P_PIPLUS: return "CCRES_MU_P_PIPLUS";
+    case CCRES_MU_P_P_PIPLUS: return "CCRES_MU_P_P_PIPLUS";
+    case CCRES_MU_P_P_P_PIPLUS: return "CCRES_MU_P_P_P_PIPLUS";
+    case CCRES_MU_P_P_P_P_PIPLUS: return "CCRES_MU_P_P_P_P_PIPLUS";
+    case CCRES_MU_P_P_P_P_P_PIPLUS: return "CCRES_MU_P_P_P_P_P_PIPLUS";
+    case CCRES_MU_PHOTON: return "CCRES_MU_PHOTON";
+    case CCRES_MU_P_PHOTON: return "CCRES_MU_P_PHOTON";
+    case CCRES_MU_P_P_PHOTON: return "CCRES_MU_P_P_PHOTON";
+    case CCRES_MU_P_P_P_PHOTON: return "CCRES_MU_P_P_P_PHOTON";
+    case CCRES_MU_P_P_P_P_PHOTON: return "CCRES_MU_P_P_P_P_PHOTON";
+    case CCRES_MU_P_P_P_P_P_PHOTON: return "CCRES_MU_P_P_P_P_P_PHOTON";
+    case CCRES_MU_PIZERO: return "CCRES_MU_PIZERO";
+    case CCRES_MU_P_PIZERO: return "CCRES_MU_P_PIZERO";
+    case CCRES_MU_P_P_PIZERO: return "CCRES_MU_P_P_PIZERO";
+    case CCRES_MU_P_P_P_PIZERO: return "CCRES_MU_P_P_P_PIZERO";
+    case CCRES_MU_P_P_P_P_PIZERO: return "CCRES_MU_P_P_P_P_PIZERO";
+    case CCRES_MU_P_P_P_P_P_PIZERO: return "CCRES_MU_P_P_P_P_P_PIZERO";
+    case CCRES_E: return "CCRES_E";
+    case CCRES_E_P: return "CCRES_E_P";
+    case CCRES_E_P_P: return "CCRES_E_P_P";
+    case CCRES_E_P_P_P: return "CCRES_E_P_P_P";
+    case CCRES_E_P_P_P_P: return "CCRES_E_P_P_P_P";
+    case CCRES_E_P_P_P_P_P: return "CCRES_E_P_P_P_P_P";
+    case CCRES_E_PIPLUS: return "CCRES_E_PIPLUS";
+    case CCRES_E_P_PIPLUS: return "CCRES_E_P_PIPLUS";
+    case CCRES_E_P_P_PIPLUS: return "CCRES_E_P_P_PIPLUS";
+    case CCRES_E_P_P_P_PIPLUS: return "CCRES_E_P_P_P_PIPLUS";
+    case CCRES_E_P_P_P_P_PIPLUS: return "CCRES_E_P_P_P_P_PIPLUS";
+    case CCRES_E_P_P_P_P_P_PIPLUS: return "CCRES_E_P_P_P_P_P_PIPLUS";
+    case CCRES_E_PHOTON: return "CCRES_E_PHOTON";
+    case CCRES_E_P_PHOTON: return "CCRES_E_P_PHOTON";
+    case CCRES_E_P_P_PHOTON: return "CCRES_E_P_P_PHOTON";
+    case CCRES_E_P_P_P_PHOTON: return "CCRES_E_P_P_P_PHOTON";
+    case CCRES_E_P_P_P_P_PHOTON: return "CCRES_E_P_P_P_P_PHOTON";
+    case CCRES_E_P_P_P_P_P_PHOTON: return "CCRES_E_P_P_P_P_P_PHOTON";
+    case CCRES_E_PIZERO: return "CCRES_E_PIZERO";
+    case CCRES_E_P_PIZERO: return "CCRES_E_P_PIZERO";
+    case CCRES_E_P_P_PIZERO: return "CCRES_E_P_P_PIZERO";
+    case CCRES_E_P_P_P_PIZERO: return "CCRES_E_P_P_P_PIZERO";
+    case CCRES_E_P_P_P_P_PIZERO: return "CCRES_E_P_P_P_P_PIZERO";
+    case CCRES_E_P_P_P_P_P_PIZERO: return "CCRES_E_P_P_P_P_P_PIZERO";
+    case NCRES_P: return "NCRES_P";
+    case NCRES_P_P: return "NCRES_P_P";
+    case NCRES_P_P_P: return "NCRES_P_P_P";
+    case NCRES_P_P_P_P: return "NCRES_P_P_P_P";
+    case NCRES_P_P_P_P_P: return "NCRES_P_P_P_P_P";
+    case NCRES_PIPLUS: return "NCRES_PIPLUS";
+    case NCRES_P_PIPLUS: return "NCRES_P_PIPLUS";
+    case NCRES_P_P_PIPLUS: return "NCRES_P_P_PIPLUS";
+    case NCRES_P_P_P_PIPLUS: return "NCRES_P_P_P_PIPLUS";
+    case NCRES_P_P_P_P_PIPLUS: return "NCRES_P_P_P_P_PIPLUS";
+    case NCRES_P_P_P_P_P_PIPLUS: return "NCRES_P_P_P_P_P_PIPLUS";
+    case NCRES_PIMINUS: return "NCRES_PIMINUS";
+    case NCRES_P_PIMINUS: return "NCRES_P_PIMINUS";
+    case NCRES_P_P_PIMINUS: return "NCRES_P_P_PIMINUS";
+    case NCRES_P_P_P_PIMINUS: return "NCRES_P_P_P_PIMINUS";
+    case NCRES_P_P_P_P_PIMINUS: return "NCRES_P_P_P_P_PIMINUS";
+    case NCRES_P_P_P_P_P_PIMINUS: return "NCRES_P_P_P_P_P_PIMINUS";
+    case NCRES_PHOTON: return "NCRES_PHOTON";
+    case NCRES_P_PHOTON: return "NCRES_P_PHOTON";
+    case NCRES_P_P_PHOTON: return "NCRES_P_P_PHOTON";
+    case NCRES_P_P_P_PHOTON: return "NCRES_P_P_P_PHOTON";
+    case NCRES_P_P_P_P_PHOTON: return "NCRES_P_P_P_P_PHOTON";
+    case NCRES_P_P_P_P_P_PHOTON: return "NCRES_P_P_P_P_P_PHOTON";
+    case NCRES_PIZERO: return "NCRES_PIZERO";
+    case NCRES_P_PIZERO: return "NCRES_P_PIZERO";
+    case NCRES_P_P_PIZERO: return "NCRES_P_P_PIZERO";
+    case NCRES_P_P_P_PIZERO: return "NCRES_P_P_P_PIZERO";
+    case NCRES_P_P_P_P_PIZERO: return "NCRES_P_P_P_P_PIZERO";
+    case NCRES_P_P_P_P_P_PIZERO: return "NCRES_P_P_P_P_P_PIZERO";
+    case CCDIS: return "CCDIS";
+    case NCDIS: return "NCDIS";
+    case CCCOH: return "CCCOH";
+    case NCCOH: return "NCCOH";
+    case OTHER_INTERACTION: return "OTHER_INTERACTION";
+    case ALL_INTERACTIONS: return "ALL_INTERACTIONS";
+    case NU_E_SCATTERING: return "NU_E_SCATTERING";
+    default: return "UNKNOWN";
     }
 }
 
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-void EnergyKickVertexSelectionAlgorithm::CalculateShowerClusterMap(const ClusterList &inputClusterList, ShowerClusterList &showerClusterList, ShowerClusterMap &showerClusterMap) const
+void EnergyKickVertexSelectionAlgorithm::SelectTrueNeutrinos(const MCParticleList *const pAllMCParticleList, MCParticleVector &selectedMCNeutrinoVector) const
 {
+    MCParticleVector allMCNeutrinoVector;
+    LArMCParticleHelper::GetNeutrinoMCParticleList(pAllMCParticleList, allMCNeutrinoVector);
+
+    for (const MCParticle *const pMCNeutrino : allMCNeutrinoVector)
+    {
+        // ATTN Now demand that input mc neutrinos LArMCParticles, with addition of interaction type
+        const LArMCParticle *const pLArMCNeutrino(dynamic_cast<const LArMCParticle*>(pMCNeutrino));
+
+        if (pLArMCNeutrino && (0 != pLArMCNeutrino->GetNuanceCode()))
+            selectedMCNeutrinoVector.push_back(pMCNeutrino);
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+float EnergyKickVertexSelectionAlgorithm::GetEventHitShoweryness(const ClusterList &inputClusterListU, const ClusterList &inputClusterListV, const ClusterList &inputClusterListW) const
+{
+    unsigned int totNHits(0U);
+    unsigned int totNShoweryHits(0U);
+    
+    for (const Cluster * const pCluster : inputClusterListU)
+    {
+        totNHits += pCluster->GetNCaloHits();
+        
+        if (this->IsClusterShowerLike(pCluster))
+            totNShoweryHits += pCluster->GetNCaloHits();
+    }
+    
+    for (const Cluster * const pCluster : inputClusterListV)
+    {
+        totNHits += pCluster->GetNCaloHits();
+        
+        if (this->IsClusterShowerLike(pCluster))
+            totNShoweryHits += pCluster->GetNCaloHits();
+    }
+    
+    for (const Cluster * const pCluster : inputClusterListW)
+    {
+        totNHits += pCluster->GetNCaloHits();
+        
+        if (this->IsClusterShowerLike(pCluster))
+            totNShoweryHits += pCluster->GetNCaloHits();
+    }
+    
+    return static_cast<float>(totNShoweryHits) / static_cast<float>(totNHits);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+float EnergyKickVertexSelectionAlgorithm::GetEventClusterShoweryness(const ClusterList &inputClusterListU, const ClusterList &inputClusterListV, const ClusterList &inputClusterListW) const
+{
+    unsigned int totNClusters(inputClusterListU.size() + inputClusterListV.size() + inputClusterListW.size());
+    unsigned int totNShoweryClusters(0U);
+    
+    for (const Cluster * const pCluster : inputClusterListU)
+    {        
+        if (this->IsClusterShowerLike(pCluster))
+            ++totNShoweryClusters;
+    }
+    
+    for (const Cluster * const pCluster : inputClusterListV)
+    {
+        if (this->IsClusterShowerLike(pCluster))
+            ++totNShoweryClusters;
+    }
+    
+    for (const Cluster * const pCluster : inputClusterListW)
+    {
+        if (this->IsClusterShowerLike(pCluster))
+            ++totNShoweryClusters;
+    }
+    
+    return static_cast<float>(totNShoweryClusters) / static_cast<float>(totNClusters);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void EnergyKickVertexSelectionAlgorithm::CalculateShowerClusterMap(const ClusterList &inputClusterList, ShowerClusterMap &showerClusterMap) const
+{
+    ShowerClusterList showerClusterList;
     const float slidingFitPitch(LArGeometryHelper::GetWireZPitch(this->GetPandora()));
     
     std::map<const Cluster *const, std::pair<CartesianVector, CartesianVector>> hitPositionMap;
@@ -232,25 +830,12 @@ void EnergyKickVertexSelectionAlgorithm::CalculateShowerClusterMap(const Cluster
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-void EnergyKickVertexSelectionAlgorithm::CalculateClusterSlidingFits(SlidingFitDataList &slidingFitDataList, const ClusterList &inputClusterList, const ShowerClusterList &showerClusterList, SlidingFitDataList &singleClusterSlidingFitDataList) const
+void EnergyKickVertexSelectionAlgorithm::CalculateClusterSlidingFits(const ClusterList &inputClusterList, SlidingFitDataList &singleClusterSlidingFitDataList) const
 {
     const float slidingFitPitch(LArGeometryHelper::GetWireZPitch(this->GetPandora()));
     
     ClusterVector sortedClusters(inputClusterList.begin(), inputClusterList.end());
     std::sort(sortedClusters.begin(), sortedClusters.end(), LArClusterHelper::SortByNHits);
-
-    for (const Cluster * const pCluster : sortedClusters)
-    {
-        if (m_closestSlidingFitCanBeShowers && this->IsClusterShowerLike(pCluster))
-            continue;
-        
-        if (pCluster->GetNCaloHits() < m_minClusterCaloHits)
-            continue;
-            
-        // Make sure the window size is such that there are not more layers than hits (following TwoDSlidingLinearFit calculation).
-        const int slidingFitWindow(std::min(static_cast<int>(pCluster->GetNCaloHits()), static_cast<int>(slidingFitPitch * m_slidingFitWindow)));
-        slidingFitDataList.emplace_back(pCluster, slidingFitWindow, slidingFitPitch);
-    }
 
     for (const Cluster * const pCluster : sortedClusters)
     {
@@ -261,72 +846,18 @@ void EnergyKickVertexSelectionAlgorithm::CalculateClusterSlidingFits(SlidingFitD
         const int slidingFitWindow(std::min(static_cast<int>(pCluster->GetNCaloHits()), static_cast<int>(slidingFitPitch * m_slidingFitWindow)));
         singleClusterSlidingFitDataList.emplace_back(pCluster, slidingFitWindow, slidingFitPitch);
     }
-    
-    if (m_closestSlidingFitCanBeShowers)
-    {
-        for (const ShowerCluster &showerCluster : showerClusterList)
-        {        
-            int totHits(0);
-            for (const Cluster * const pCluster : showerCluster.GetClusters())
-                totHits += pCluster->GetNCaloHits();
-                
-            if (totHits < m_minClusterCaloHits)
-                continue;
-            
-            // Make sure the window size is such that there are not more layers than hits (following TwoDSlidingLinearFit calculation).
-            const int slidingFitWindow(std::min(static_cast<int>(totHits), static_cast<int>(slidingFitPitch * m_slidingFitWindow)));
-            slidingFitDataList.emplace_back(showerCluster.GetClusters(), slidingFitWindow, slidingFitPitch, m_minClusterCaloHits);
-        }
-    }
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
 void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const CartesianVector &vertexPosition2D, float &energyKick, float &energyAsymmetry, float &globalEnergyAsymmetry, 
-    const SlidingFitDataList &slidingFitDataList, const ShowerClusterMap &showerClusterMap, float &showerEnergyAsymmetry, const SlidingFitDataList &singleClusterSlidingFitDataList) const
+    const ShowerClusterMap &showerClusterMap, float &showerEnergyAsymmetry, const SlidingFitDataList &singleClusterSlidingFitDataList) const
 {    
     unsigned int totHits(0);
-    bool useEnergy(!m_useHitCounting), useAsymmetry(true);
+    bool useEnergy(true), useAsymmetry(true);
     float totEnergy(0.f), totEnergyKick(0.f), totHitKick(0.f);
     CartesianVector energyWeightedDirectionSum(0.f, 0.f, 0.f), hitWeightedDirectionSum(0.f, 0.f, 0.f);
     ClusterVector asymmetryClusters;
-
-    // Find the closest cluster to the vertex candidate.
-    SlidingFitDataList closeSlidingFitData;
-    
-    for (const SlidingFitData &slidingFitData : slidingFitDataList)
-    {
-        for (const Cluster *const pCluster : slidingFitData.GetClusterVector())
-        {
-            if (this->IsClusterShowerLike(pCluster))
-                continue;
-            
-            const float distance = LArClusterHelper::GetClosestDistance(vertexPosition2D, pCluster);
-            
-            if (distance < m_vertexClusterDistance)
-            {
-                closeSlidingFitData.push_back(slidingFitData);
-                break;
-            }
-        }
-    }
-    
-    SlidingFitData closestSlidingFitData;
-    float largestFitEnergy(0.f);
-    
-    for (const SlidingFitData &slidingFitData : closeSlidingFitData)
-    {
-        float totalEnergy(0.f);
-        
-        for (const Cluster * const pCluster : slidingFitData.GetClusterVector())
-            totalEnergy += pCluster->GetElectromagneticEnergy();
-            
-        if (totalEnergy > largestFitEnergy)
-        {
-            closestSlidingFitData = slidingFitData;
-            largestFitEnergy = totalEnergy;
-        }
-    }
 
     for (const SlidingFitData &slidingFitData : singleClusterSlidingFitDataList)
     {
@@ -342,13 +873,10 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
             const CartesianVector &clusterDisplacement((minLayerClosest) ? vertexToMinLayer : vertexToMaxLayer);
             const CartesianVector &clusterDirection((minLayerClosest) ? slidingFitData.GetMinLayerDirection() : slidingFitData.GetMaxLayerDirection());
 
-            this->IncrementEnergyKickParameters(pCluster, clusterDisplacement, clusterDirection, totEnergyKick, totEnergy, totHitKick, totHits, closestSlidingFitData, showerClusterMap);
+            this->IncrementEnergyKickParameters(pCluster, clusterDisplacement, clusterDirection, totEnergyKick, totEnergy, totHitKick, totHits);
 
             if (LArClusterHelper::GetClosestDistance(vertexPosition2D, pCluster) < m_maxAsymmetryDistance)
             {
-                if (m_noLocalShowerAsymmetry && this->IsClusterShowerLike(pCluster))
-                    continue;
-                    
                 useAsymmetry &= this->IncrementEnergyAsymmetryParameters(pCluster->GetElectromagneticEnergy(), clusterDirection, energyWeightedDirectionSum);
                 useAsymmetry &= this->IncrementEnergyAsymmetryParameters(static_cast<float>(pCluster->GetNCaloHits()), clusterDirection, hitWeightedDirectionSum);
                 asymmetryClusters.push_back(pCluster);
@@ -358,58 +886,55 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
     
     float newShowerEnergyAsymmetry(1.f);
     
-    if (m_useShowerEnergyAsymmetry)
+    for (const auto &mapEntry : showerClusterMap)
     {
-        for (const auto &mapEntry : showerClusterMap)
+        bool useShowerCluster = false;
+        const auto &showerCluster = mapEntry.second;
+        
+        for (const Cluster * const pCluster : showerCluster.GetClusters())
         {
-            bool useShowerCluster = false;
-            const auto &showerCluster = mapEntry.second;
+            if (LArClusterHelper::GetClosestDistance(vertexPosition2D, pCluster) > m_vertexClusterDistance)
+                continue;
+            
+            useShowerCluster = true;
+            break;
+        }
+        
+        if (useShowerCluster)
+        {
+            const auto &showerFit = showerCluster.GetFit();
+            
+            float rL(0.f), rT(0.f);
+            showerFit.GetLocalPosition(vertexPosition2D, rL, rT);
+            
+            CartesianVector showerDirection(0.f, 0.f, 0.f);
+            showerFit.GetGlobalFitDirection(rL, showerDirection);
+            
+            const float projectedVtxPosition = vertexPosition2D.GetDotProduct(showerDirection);
+            float beforeVtxEnergy(0.f), afterVtxEnergy(0.f);
             
             for (const Cluster * const pCluster : showerCluster.GetClusters())
             {
-                if (LArClusterHelper::GetClosestDistance(vertexPosition2D, pCluster) > m_vertexClusterDistance)
-                    continue;
-                
-                useShowerCluster = true;
-                break;
+                CaloHitList caloHitList;
+                pCluster->GetOrderedCaloHitList().FillCaloHitList(caloHitList);
+
+                CaloHitVector caloHitVector(caloHitList.begin(), caloHitList.end());
+                std::sort(caloHitVector.begin(), caloHitVector.end(), LArClusterHelper::SortHitsByPosition);
+
+                for (const CaloHit *const pCaloHit : caloHitVector)
+                {
+                    if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) < projectedVtxPosition)
+                        beforeVtxEnergy += pCaloHit->GetElectromagneticEnergy();
+                        
+                    else if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) > projectedVtxPosition)
+                        afterVtxEnergy += pCaloHit->GetElectromagneticEnergy();
+                }
             }
             
-            if (useShowerCluster)
-            {
-                const auto &showerFit = showerCluster.GetFit();
+            if (beforeVtxEnergy + afterVtxEnergy > 0.f)
+                newShowerEnergyAsymmetry = std::fabs(afterVtxEnergy - beforeVtxEnergy) / (afterVtxEnergy + beforeVtxEnergy);
                 
-                float rL(0.f), rT(0.f);
-                showerFit.GetLocalPosition(vertexPosition2D, rL, rT);
-                
-                CartesianVector showerDirection(0.f, 0.f, 0.f);
-                showerFit.GetGlobalFitDirection(rL, showerDirection);
-                
-                const float projectedVtxPosition = vertexPosition2D.GetDotProduct(showerDirection);
-                float beforeVtxEnergy(0.f), afterVtxEnergy(0.f);
-                
-                for (const Cluster * const pCluster : showerCluster.GetClusters())
-                {
-                    CaloHitList caloHitList;
-                    pCluster->GetOrderedCaloHitList().FillCaloHitList(caloHitList);
-
-                    CaloHitVector caloHitVector(caloHitList.begin(), caloHitList.end());
-                    std::sort(caloHitVector.begin(), caloHitVector.end(), LArClusterHelper::SortHitsByPosition);
-
-                    for (const CaloHit *const pCaloHit : caloHitVector)
-                    {
-                        if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) < projectedVtxPosition)
-                            beforeVtxEnergy += pCaloHit->GetElectromagneticEnergy();
-                            
-                        else if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) > projectedVtxPosition)
-                            afterVtxEnergy += pCaloHit->GetElectromagneticEnergy();
-                    }
-                }
-                
-                if (beforeVtxEnergy + afterVtxEnergy > 0.f)
-                    newShowerEnergyAsymmetry = std::fabs(afterVtxEnergy - beforeVtxEnergy) / (afterVtxEnergy + beforeVtxEnergy);
-                    
-                break;
-            }
+            break;
         }
     }
     
@@ -429,7 +954,7 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
     if ((useEnergy && energyWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)) || (!useEnergy && hitWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)))
         globalEnergyAsymmetry += 0.f;
     
-    else if (m_useGlobalEnergyAsymmetry)
+    else
         this->IncrementGlobalEnergyAsymmetry(globalEnergyAsymmetry, useEnergy, vertexPosition2D, singleClusterSlidingFitDataList, localWeightedDirectionSum); //change me
 }
 
@@ -491,28 +1016,20 @@ void EnergyKickVertexSelectionAlgorithm::IncrementGlobalEnergyAsymmetry(float &g
 //------------------------------------------------------------------------------------------------------------------------------------------
 
 void EnergyKickVertexSelectionAlgorithm::IncrementEnergyKickParameters(const Cluster *const pCluster, const CartesianVector &clusterDisplacement,
-    const CartesianVector &clusterDirection, float &totEnergyKick, float &totEnergy, float &totHitKick, unsigned int &totHits, const SlidingFitData &closestSlidingFitData, const ShowerClusterMap &showerClusterMap) const
+    const CartesianVector &clusterDirection, float &totEnergyKick, float &totEnergy, float &totHitKick, unsigned int &totHits) const
 {
     float impactParameter(clusterDisplacement.GetCrossProduct(clusterDirection).GetMagnitude());   
     const float displacement(clusterDisplacement.GetMagnitude());
         
     if (this->IsClusterShowerLike(pCluster))
     {       
-        float showerCollapsingFactor(0.f);
- 
-        if (m_tempShowerLikeStrength == 0.f)
-            showerCollapsingFactor = m_showerCollapsingConstant;
-            
-        else
-            showerCollapsingFactor = m_showerCollapsingConstant * (1.f - m_tempShowerLikeStrength * this->IsClusterShowerLike(pCluster, closestSlidingFitData, showerClusterMap));
- 
         totEnergyKick += m_showerDeweightingConstant * pCluster->GetElectromagneticEnergy() * 
-                        (showerCollapsingFactor * impactParameter + m_xOffset) / (displacement + m_rOffset);
+                        (m_showerCollapsingConstant * impactParameter + m_xOffset) / (displacement + m_rOffset);
                         
         totEnergy += m_showerDeweightingConstant * pCluster->GetElectromagneticEnergy();
         
         totHitKick += static_cast<float>(m_showerDeweightingConstant) * static_cast<float>(pCluster->GetNCaloHits()) * 
-                      (showerCollapsingFactor * impactParameter + m_xOffset) / (displacement + m_rOffset);
+                      (m_showerCollapsingConstant * impactParameter + m_xOffset) / (displacement + m_rOffset);
                       
         totHits += static_cast<int>(std::round(m_showerDeweightingConstant * static_cast<float>(pCluster->GetNCaloHits())));
     }
@@ -525,121 +1042,6 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyKickParameters(const Clu
         totHitKick += static_cast<float>(pCluster->GetNCaloHits()) * (impactParameter + m_xOffset) / (displacement + m_rOffset);
         totHits += pCluster->GetNCaloHits();
     }
-}
-
-//------------------------------------------------------------------------------------------------------------------------------------------
-
-float EnergyKickVertexSelectionAlgorithm::IsClusterShowerLike(const Cluster *const pCluster, const SlidingFitData &closestSlidingFitData, const ShowerClusterMap &showerClusterMap) const
-{
-    if (pCluster->GetParticleId() != E_MINUS || LArClusterHelper::GetLength(pCluster) >= m_minShowerSpineLength)
-        return 0.f;
-    
-    auto findIter = showerClusterMap.find(pCluster);
-    if (findIter == showerClusterMap.end()) // it's a tiny bit of shower that was too crap to incorporate into a shower
-        return 0.f;
-     
-    if (closestSlidingFitData.GetClusterVector().empty())
-        return 0.f;
-        
-    const ShowerCluster &showerCluster = findIter->second;
-    
-    auto showerDistanceMapIter = m_showerDataMap.find(std::make_pair(&showerCluster, &closestSlidingFitData));
-    if (showerDistanceMapIter != m_showerDataMap.end())
-        return showerDistanceMapIter->second;
-    
-    float closestShowerDistance = std::numeric_limits<float>::max();
-    
-    for (const Cluster * const pClosestCluster : closestSlidingFitData.GetClusterVector())
-    {
-        ClusterList showerClusterList;
-        
-        for (const Cluster *const pShowerCluster : showerCluster.GetClusters())
-            showerClusterList.push_back(pShowerCluster);
-        
-        const float distance = LArClusterHelper::GetClosestDistance(pClosestCluster, showerClusterList);
-        
-        if (distance < closestShowerDistance)
-            closestShowerDistance = distance;
-    }
-                             
-    CartesianVector closestShowerFitDirection(0.f, 0.f, 0.f), closestFitDirection(0.f, 0.f, 0.f), closestFitPosition(0.f, 0.f, 0.f), farthestFitPosition(0.f, 0.f, 0.f);
-    const float maxMaxDistance = (showerCluster.GetFit().GetGlobalMaxLayerPosition() - closestSlidingFitData.GetMaxLayerPosition()).GetMagnitude();
-    const float maxMinDistance = (showerCluster.GetFit().GetGlobalMaxLayerPosition() - closestSlidingFitData.GetMinLayerPosition()).GetMagnitude();
-    const float minMaxDistance = (showerCluster.GetFit().GetGlobalMinLayerPosition() - closestSlidingFitData.GetMaxLayerPosition()).GetMagnitude();
-    const float minMinDistance = (showerCluster.GetFit().GetGlobalMinLayerPosition() - closestSlidingFitData.GetMinLayerPosition()).GetMagnitude();
-                            
-    if (maxMaxDistance <= maxMinDistance && maxMaxDistance <= minMaxDistance && maxMaxDistance <= minMinDistance)
-    {
-        closestShowerFitDirection = showerCluster.GetFit().GetGlobalMaxLayerDirection();
-        closestFitDirection = closestSlidingFitData.GetMaxLayerDirection();
-        
-        closestFitPosition = closestSlidingFitData.GetMaxLayerPosition();
-        farthestFitPosition = closestSlidingFitData.GetMinLayerPosition();
-    }
-        
-    else if (maxMinDistance <= maxMaxDistance && maxMinDistance <= minMaxDistance && maxMinDistance <= minMinDistance)
-    {
-        closestShowerFitDirection = showerCluster.GetFit().GetGlobalMaxLayerDirection();
-        closestFitDirection = closestSlidingFitData.GetMinLayerDirection();
-        
-        closestFitPosition = closestSlidingFitData.GetMinLayerPosition();
-        farthestFitPosition = closestSlidingFitData.GetMaxLayerPosition();
-    }
-    
-    else if (minMaxDistance <= maxMaxDistance && minMaxDistance <= maxMinDistance && minMaxDistance <= minMinDistance)
-    {
-        closestShowerFitDirection = showerCluster.GetFit().GetGlobalMinLayerDirection();
-        closestFitDirection = closestSlidingFitData.GetMaxLayerDirection();
-        
-        closestFitPosition = closestSlidingFitData.GetMaxLayerPosition();
-        farthestFitPosition = closestSlidingFitData.GetMinLayerPosition();
-    }
-    
-    else
-    {
-        closestShowerFitDirection = showerCluster.GetFit().GetGlobalMinLayerDirection();
-        closestFitDirection = closestSlidingFitData.GetMinLayerDirection();
-        
-        closestFitPosition = closestSlidingFitData.GetMinLayerPosition();
-        farthestFitPosition = closestSlidingFitData.GetMaxLayerPosition();
-    }
-
-    const float cosTheta = std::fabs(closestShowerFitDirection.GetDotProduct(closestFitDirection));
-    
-    
-    int outsideHitCount(0), insideHitCount(0);
-    
-    if (maxMaxDistance < m_minShowerInwardnessDistance || maxMinDistance < m_minShowerInwardnessDistance || minMaxDistance < m_minShowerInwardnessDistance || minMinDistance < m_minShowerInwardnessDistance)
-    {
-        const float fitLength = (farthestFitPosition - closestFitPosition).GetDotProduct(closestFitDirection);
-        
-        for (const Cluster * const pShowerCluster : showerCluster.GetClusters())
-        {
-            CaloHitList caloHitList;
-            pShowerCluster->GetOrderedCaloHitList().FillCaloHitList(caloHitList); 
-            
-            CaloHitVector caloHitVector(caloHitList.begin(), caloHitList.end());
-            std::sort(caloHitVector.begin(), caloHitVector.end(), LArClusterHelper::SortHitsByPosition);
-            
-            for (const CaloHit * const pCaloHit : caloHitVector)
-            {
-                const float caloHitProjPos = (pCaloHit->GetPositionVector() - closestFitPosition).GetDotProduct(closestFitDirection);
-                if (caloHitProjPos < 0.f || caloHitProjPos > fitLength)
-                    ++outsideHitCount;
-                    
-                else
-                    ++insideHitCount;
-            }
-        }
-    }
-    
-    const float showerInwardness = ((insideHitCount + outsideHitCount) == 0) ? 0.5 : std::fabs(static_cast<float>(insideHitCount - outsideHitCount)) / static_cast<float>(insideHitCount + outsideHitCount);
-    const float showerClusterNumberFactor = m_useShowerClusterNumber ? (1.f - std::exp(-m_showerClusterNumberConstant * static_cast<float>(showerCluster.GetClusters().size()))) : 1.f;
-    
-    const float metric = std::exp(-closestShowerDistance * m_showerDistanceConstant - m_showerAngleConstant * cosTheta) * showerClusterNumberFactor * std::exp(-m_showerInwardnessConstant * showerInwardness);
-    m_showerDataMap.emplace(std::make_pair(&showerCluster, &closestSlidingFitData), metric);
-    
-    return metric;
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -742,13 +1144,192 @@ float EnergyKickVertexSelectionAlgorithm::CalculateEnergyAsymmetry(const bool us
     const float totHitEnergy(beforeVtxHitEnergy + afterVtxHitEnergy);
     const unsigned int totHitCount(beforeVtxHitCount + afterVtxHitCount);
     
-    if (useEnergyMetrics && (!m_useHitCountingError && totHitEnergy > std::numeric_limits<float>::epsilon()))
+    if (useEnergyMetrics && (totHitEnergy > std::numeric_limits<float>::epsilon()))
         return std::fabs((afterVtxHitEnergy - beforeVtxHitEnergy)) / totHitEnergy;
 
     if (0 == totHitCount)
         throw StatusCodeException(STATUS_CODE_FAILURE);
 
     return std::fabs((static_cast<float>(afterVtxHitCount) - static_cast<float>(beforeVtxHitCount))) / static_cast<float>(totHitCount);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+float EnergyKickVertexSelectionAlgorithm::GetFastScore(const KernelEstimate &kernelEstimateU, const KernelEstimate &kernelEstimateV,
+    const KernelEstimate &kernelEstimateW) const
+{
+    Histogram histogramU(m_fastHistogramNPhiBins, m_fastHistogramPhiMin, m_fastHistogramPhiMax);
+    Histogram histogramV(m_fastHistogramNPhiBins, m_fastHistogramPhiMin, m_fastHistogramPhiMax);
+    Histogram histogramW(m_fastHistogramNPhiBins, m_fastHistogramPhiMin, m_fastHistogramPhiMax);
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateU.GetContributionList())
+        histogramU.Fill(contribution.first, contribution.second);
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateV.GetContributionList())
+        histogramV.Fill(contribution.first, contribution.second);
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateW.GetContributionList())
+        histogramW.Fill(contribution.first, contribution.second);
+
+    // Is the below correct?
+    histogramU.Scale(1.f/histogramU.GetCumulativeSum());
+    histogramV.Scale(1.f/histogramV.GetCumulativeSum());
+    histogramW.Scale(1.f/histogramW.GetCumulativeSum());
+
+    // ATTN Need to renormalise histograms if ever want to directly compare fast and full scores
+    float figureOfMerit(0.f);
+
+    for (int xBin = 0; xBin < histogramU.GetNBinsX(); ++xBin)
+    {
+        const float binContentU(histogramU.GetBinContent(xBin));
+        const float binContentV(histogramV.GetBinContent(xBin));
+        const float binContentW(histogramW.GetBinContent(xBin));
+        figureOfMerit += binContentU * binContentU + binContentV * binContentV + binContentW * binContentW;
+    }
+
+    return figureOfMerit;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+float EnergyKickVertexSelectionAlgorithm::GetMidwayScore(const KernelEstimate &kernelEstimateU, const KernelEstimate &kernelEstimateV,
+    const KernelEstimate &kernelEstimateW) const
+{
+    Histogram histogramU(m_fastHistogramNPhiBins, m_fastHistogramPhiMin, m_fastHistogramPhiMax);
+    Histogram histogramV(m_fastHistogramNPhiBins, m_fastHistogramPhiMin, m_fastHistogramPhiMax);
+    Histogram histogramW(m_fastHistogramNPhiBins, m_fastHistogramPhiMin, m_fastHistogramPhiMax);
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateU.GetContributionList())
+        histogramU.Fill(contribution.first, contribution.second);
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateV.GetContributionList())
+        histogramV.Fill(contribution.first, contribution.second);
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateW.GetContributionList())
+        histogramW.Fill(contribution.first, contribution.second);
+
+    // Is the below correct?
+    histogramU.Scale(1.f/histogramU.GetCumulativeSum());
+    histogramV.Scale(1.f/histogramV.GetCumulativeSum());
+    histogramW.Scale(1.f/histogramW.GetCumulativeSum());
+
+    float figureOfMerit(0.f);
+
+    for (int xBin = 0; xBin < histogramU.GetNBinsX(); ++xBin)
+    {
+        const float binCenter(histogramU.GetXLow() + (static_cast<float>(xBin) + 0.5f) * histogramU.GetXBinWidth());        
+        figureOfMerit += histogramU.GetBinContent(xBin) * kernelEstimateU.Sample(binCenter);
+        figureOfMerit += histogramV.GetBinContent(xBin) * kernelEstimateV.Sample(binCenter);
+        figureOfMerit += histogramW.GetBinContent(xBin) * kernelEstimateW.Sample(binCenter);
+    }
+
+    return figureOfMerit;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+float EnergyKickVertexSelectionAlgorithm::GetFullScore(const KernelEstimate &kernelEstimateU, const KernelEstimate &kernelEstimateV,
+    const KernelEstimate &kernelEstimateW) const
+{
+    float figureOfMeritU(0.f);
+    float figureOfMeritV(0.f);
+    float figureOfMeritW(0.f);
+    
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateU.GetContributionList())
+    {
+        const auto sample = kernelEstimateU.Sample(contribution.first);
+        figureOfMeritU += contribution.second * sample;
+    }
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateV.GetContributionList())
+    {
+        const auto sample = kernelEstimateV.Sample(contribution.first);
+        figureOfMeritV += contribution.second * sample;
+    }
+
+    for (const KernelEstimate::ContributionList::value_type &contribution : kernelEstimateW.GetContributionList())
+    {
+        const auto sample = kernelEstimateW.Sample(contribution.first);
+        figureOfMeritW += contribution.second * sample;
+    }
+
+    return (figureOfMeritU + figureOfMeritV + figureOfMeritW)/50000.f;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void EnergyKickVertexSelectionAlgorithm::FillKernelEstimate(const Vertex *const pVertex, const HitType hitType, HitKDTree2D &kdTree, KernelEstimate &kernelEstimate) const
+{
+    const CartesianVector vertexPosition2D(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), hitType));
+    KDTreeBox searchRegionHits = build_2d_kd_search_region(vertexPosition2D, m_maxHitVertexDisplacement1D, m_maxHitVertexDisplacement1D);
+
+    HitKDNode2DList found;
+    kdTree.search(searchRegionHits, found);
+
+    for (const auto &hit : found)
+    {
+        const CartesianVector displacement(hit.data->GetPositionVector() - vertexPosition2D);
+        const float magnitude(displacement.GetMagnitude());
+
+        if (magnitude < std::numeric_limits<float>::epsilon())
+            continue;
+
+        float phi(this->atan2Fast(displacement.GetZ(), displacement.GetX()));
+        float weight(1.f / (std::sqrt(magnitude + std::fabs(m_kappa))));
+
+        if (m_enableFolding && (phi < 0.f))
+        {
+            phi += M_PI;
+            weight *= -1.f;
+        }
+
+        kernelEstimate.AddContribution(phi, weight);
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+float EnergyKickVertexSelectionAlgorithm::atan2Fast(const float y, const float x) const
+{
+    const float ONE_QTR_PI(0.25f * M_PI);
+    const float THR_QTR_PI(0.75f * M_PI);
+
+    const float abs_y(std::max(std::fabs(y), std::numeric_limits<float>::epsilon()));
+    const float abs_x(std::fabs(x));
+
+    const float r((x < 0.f) ? (x + abs_y) / (abs_y + abs_x) : (abs_x - abs_y) / (abs_x + abs_y));
+    const float angle(((x < 0.f) ? THR_QTR_PI : ONE_QTR_PI) + (0.1963f * r * r - 0.9817f) * r);
+
+    return ((y < 0.f) ? -angle : angle); // negate if in quad III or IV
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+float EnergyKickVertexSelectionAlgorithm::KernelEstimate::Sample(const float x) const
+{
+    const ContributionList &contributionList(this->GetContributionList());
+    ContributionList::const_iterator lowerIter(contributionList.lower_bound(x - 3.f * m_sigma));
+    ContributionList::const_iterator upperIter(contributionList.upper_bound(x + 3.f * m_sigma));
+
+    float sample(0.f);
+    const float gaussConstant(1.f / std::sqrt(2.f * M_PI * m_sigma * m_sigma));
+
+    for (ContributionList::const_iterator iter = lowerIter; iter != upperIter; ++iter)
+    {
+        const float deltaSigma((x - iter->first) / m_sigma);
+        const float gaussian(gaussConstant * std::exp(-0.5f * deltaSigma * deltaSigma));
+        sample += iter->second * gaussian;
+    }
+
+    return sample;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void EnergyKickVertexSelectionAlgorithm::KernelEstimate::AddContribution(const float x, const float weight)
+{
+    m_contributionList.insert(ContributionList::value_type(x, weight));
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -809,6 +1390,9 @@ EnergyKickVertexSelectionAlgorithm::ShowerCluster::ShowerCluster(const pandora::
 
 StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xmlHandle)
 {
+    PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ReadValue(xmlHandle, "MCParticleListName", m_mcParticleListName));
+    PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ReadValue(xmlHandle, "CaloHitListName", m_caloHitListName));
+    
     PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ReadVectorOfValues(xmlHandle,
         "InputClusterListNames", m_inputClusterListNames));
 
@@ -827,12 +1411,9 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "Epsilon", m_epsilon));
 
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "AsymmetryConstant", m_asymmetryConstant));
-
-    if ((m_rOffset < std::numeric_limits<float>::epsilon()) || (m_epsilon < std::numeric_limits<float>::epsilon()) || (m_asymmetryConstant < std::numeric_limits<float>::epsilon()))
+    if ((m_rOffset < std::numeric_limits<float>::epsilon()) || (m_epsilon < std::numeric_limits<float>::epsilon()))
     {
-        std::cout << "EnergyKickVertexSelection: Invalid parameter(s), ROffset " << m_rOffset << ", Epsilon " << m_epsilon << ", AsymmetryConstant " << m_asymmetryConstant << std::endl;
+        std::cout << "EnergyKickVertexSelection: Invalid parameter(s), ROffset " << m_rOffset << ", Epsilon " << m_epsilon << std::endl;
         return STATUS_CODE_INVALID_PARAMETER;
     }
 
@@ -844,9 +1425,6 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "MaxAsymmetryNClusters", m_maxAsymmetryNClusters));
-    
-     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "BeamDeweightingConstant", m_beamDeweightingConstant));
     
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "ShowerDeweightingConstant", m_showerDeweightingConstant));
@@ -861,62 +1439,52 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
         "ShowerClusteringDistance", m_showerClusteringDistance));
         
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "ShowerAngleConstant", m_showerAngleConstant));
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "ShowerDistanceConstant", m_showerDistanceConstant));
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "VertexClusterDistance", m_vertexClusterDistance));
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "TempShowerLikeStrength", m_tempShowerLikeStrength));
-       
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "GlobalAsymmetryConstant", m_globalAsymmetryConstant));
-        
-        PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "UseGlobalEnergyAsymmetry", m_useGlobalEnergyAsymmetry));
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "ShowerAsymmetryConstant", m_showerAsymmetryConstant));
-        
-        PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "UseShowerEnergyAsymmetry", m_useShowerEnergyAsymmetry));
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "ShowerClusterNumberConstant", m_showerClusterNumberConstant));
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "MinShowerInwardnessDistance", m_minShowerInwardnessDistance));
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "ShowerInwardnessConstant", m_showerInwardnessConstant));
       
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "MinShowerClusterHits", m_minShowerClusterHits));
-     
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "ClosestSlidingFitCanBeShowers", m_closestSlidingFitCanBeShowers));   
-    
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "NoLocalShowerAsymmetry", m_noLocalShowerAsymmetry));   
-    
+        
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "UseShowerClusteringApproximation", m_useShowerClusteringApproximation));   
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "UseShowerClusterNumber", m_useShowerClusterNumber));  
-        
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "UseHitCountingError", m_useHitCountingError));
-
-
-    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
-        "UseHitCounting", m_useHitCounting));
   
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "CheatTrackShowerId", m_cheatTrackShowerId));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "FastScoreCheck", m_fastScoreCheck));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "FastScoreOnly", m_fastScoreOnly));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "FullScore", m_fullScore));
+ 
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "KernelEstimateSigma", m_kernelEstimateSigma));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "Kappa", m_kappa));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "MaxHitVertexDisplacement1D", m_maxHitVertexDisplacement1D));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "MinFastScoreFraction", m_minFastScoreFraction));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "FastHistogramNPhiBins", m_fastHistogramNPhiBins));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "FastHistogramPhiMin", m_fastHistogramPhiMin));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "FastHistogramPhiMax", m_fastHistogramPhiMax));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "EnableFolding", m_enableFolding));
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "TrainingSetPrefix", m_trainingSetPrefix));
         
         
         
