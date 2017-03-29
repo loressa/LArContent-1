@@ -14,13 +14,16 @@
 
 #include "larpandoracontent/LArVertex/EnergyKickVertexSelectionAlgorithm.h"
 
+
+#include "larpandoracontent/LArHelpers/LArMCParticleHelper.h" 
+
 using namespace pandora;
 
 namespace lar_content
 {
 
 EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
-    m_minClusterCaloHits(12),
+    m_minClusterCaloHits(12), // CHANGE DEFAULTS
     m_slidingFitWindow(100),
     m_rOffset(10.f),
     m_xOffset(0.06),
@@ -30,7 +33,7 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_minAsymmetryCosAngle(0.9962),
     m_maxAsymmetryNClusters(2),
     
-    m_beamDeweightingConstant(1.f),
+    m_beamDeweightingConstant(0.4), // 0.8),
     m_showerDeweightingConstant(1.f),
     m_showerCollapsingConstant(1.f),
     m_minShowerSpineLength(15.f),
@@ -40,17 +43,22 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_vertexClusterDistance(4.f),
     m_tempShowerLikeStrength(0.f),
     m_globalAsymmetryConstant(1.f),
-    m_useGlobalEnergyAsymmetry(false),
-    m_showerAsymmetryConstant(1.f),
-    m_useShowerEnergyAsymmetry(false),
+    m_useGlobalEnergyAsymmetry(true),
+    m_showerAsymmetryConstant(1.f), // change me
+    m_useShowerEnergyAsymmetry(true), // change me?
     m_showerClusterNumberConstant(1.f),
     m_minShowerInwardnessDistance(1.5),
     m_showerInwardnessConstant(0.f),
-    m_minShowerClusterHits(12),
-    m_closestSlidingFitCanBeShowers(false),
+    m_minShowerClusterHits(1),// 10),
+    m_closestSlidingFitCanBeShowers(true),
     m_noLocalShowerAsymmetry(false),
     m_useShowerClusteringApproximation(false),
-    m_useShowerClusterNumber(false)
+    m_useShowerClusterNumber(false),
+    
+    m_useHitCountingError(false),
+    m_useHitCounting(false),
+    m_cheatTrackShowerId(false)
+    
     
     
 {
@@ -88,9 +96,12 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
     ShowerClusterMap showerClusterMapU, showerClusterMapV, showerClusterMapW;
     ShowerClusterList showerClusterListU, showerClusterListV, showerClusterListW;
     
-    this->CalculateShowerClusterMap(clustersU, showerClusterListU, showerClusterMapU);
-    this->CalculateShowerClusterMap(clustersV, showerClusterListV, showerClusterMapV);
-    this->CalculateShowerClusterMap(clustersW, showerClusterListW, showerClusterMapW);
+    if (m_tempShowerLikeStrength != 0.f || m_useShowerEnergyAsymmetry)
+    {
+        this->CalculateShowerClusterMap(clustersU, showerClusterListU, showerClusterMapU);
+        this->CalculateShowerClusterMap(clustersV, showerClusterListV, showerClusterMapV);
+        this->CalculateShowerClusterMap(clustersW, showerClusterListW, showerClusterMapW);
+    }
     
     SlidingFitDataList slidingFitDataListU, slidingFitDataListV, slidingFitDataListW, singleClusterSlidingFitDataListU, singleClusterSlidingFitDataListV, singleClusterSlidingFitDataListW;
     
@@ -273,11 +284,9 @@ void EnergyKickVertexSelectionAlgorithm::CalculateClusterSlidingFits(SlidingFitD
 
 void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const CartesianVector &vertexPosition2D, float &energyKick, float &energyAsymmetry, float &globalEnergyAsymmetry, 
     const SlidingFitDataList &slidingFitDataList, const ShowerClusterMap &showerClusterMap, float &showerEnergyAsymmetry, const SlidingFitDataList &singleClusterSlidingFitDataList) const
-{
-    (void) showerEnergyAsymmetry;
-    
+{    
     unsigned int totHits(0);
-    bool useEnergy(true), useAsymmetry(true);
+    bool useEnergy(!m_useHitCounting), useAsymmetry(true);
     float totEnergy(0.f), totEnergyKick(0.f), totHitKick(0.f);
     CartesianVector energyWeightedDirectionSum(0.f, 0.f, 0.f), hitWeightedDirectionSum(0.f, 0.f, 0.f);
     ClusterVector asymmetryClusters;
@@ -348,58 +357,62 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
     }
     
     float newShowerEnergyAsymmetry(1.f);
-    for (const auto &mapEntry : showerClusterMap)
+    
+    if (m_useShowerEnergyAsymmetry)
     {
-        bool useShowerCluster = false;
-        const auto &showerCluster = mapEntry.second;
-        
-        for (const Cluster * const pCluster : showerCluster.GetClusters())
+        for (const auto &mapEntry : showerClusterMap)
         {
-            if (LArClusterHelper::GetClosestDistance(vertexPosition2D, pCluster) > m_vertexClusterDistance)
-                continue;
-            
-            useShowerCluster = true;
-            break;
-        }
-        
-        if (useShowerCluster)
-        {
-            const auto &showerFit = showerCluster.GetFit();
-            
-            float rL(0.f), rT(0.f);
-            showerFit.GetLocalPosition(vertexPosition2D, rL, rT);
-            
-            CartesianVector showerDirection(0.f, 0.f, 0.f);
-            showerFit.GetGlobalFitDirection(rL, showerDirection);
-            
-            const float projectedVtxPosition = vertexPosition2D.GetDotProduct(showerDirection);
-            float beforeVtxEnergy(0.f), afterVtxEnergy(0.f);
+            bool useShowerCluster = false;
+            const auto &showerCluster = mapEntry.second;
             
             for (const Cluster * const pCluster : showerCluster.GetClusters())
             {
-                CaloHitList caloHitList;
-                pCluster->GetOrderedCaloHitList().FillCaloHitList(caloHitList);
-
-                CaloHitVector caloHitVector(caloHitList.begin(), caloHitList.end());
-                std::sort(caloHitVector.begin(), caloHitVector.end(), LArClusterHelper::SortHitsByPosition);
-
-                for (const CaloHit *const pCaloHit : caloHitVector)
-                {
-                    if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) < projectedVtxPosition)
-                        beforeVtxEnergy += pCaloHit->GetElectromagneticEnergy();
-                        
-                    else if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) > projectedVtxPosition)
-                        afterVtxEnergy += pCaloHit->GetElectromagneticEnergy();
-                }
+                if (LArClusterHelper::GetClosestDistance(vertexPosition2D, pCluster) > m_vertexClusterDistance)
+                    continue;
+                
+                useShowerCluster = true;
+                break;
             }
             
-            if (beforeVtxEnergy + afterVtxEnergy > 0.f)
-                newShowerEnergyAsymmetry = std::fabs(afterVtxEnergy - beforeVtxEnergy) / (afterVtxEnergy + beforeVtxEnergy);
+            if (useShowerCluster)
+            {
+                const auto &showerFit = showerCluster.GetFit();
                 
-            break;
+                float rL(0.f), rT(0.f);
+                showerFit.GetLocalPosition(vertexPosition2D, rL, rT);
+                
+                CartesianVector showerDirection(0.f, 0.f, 0.f);
+                showerFit.GetGlobalFitDirection(rL, showerDirection);
+                
+                const float projectedVtxPosition = vertexPosition2D.GetDotProduct(showerDirection);
+                float beforeVtxEnergy(0.f), afterVtxEnergy(0.f);
+                
+                for (const Cluster * const pCluster : showerCluster.GetClusters())
+                {
+                    CaloHitList caloHitList;
+                    pCluster->GetOrderedCaloHitList().FillCaloHitList(caloHitList);
+
+                    CaloHitVector caloHitVector(caloHitList.begin(), caloHitList.end());
+                    std::sort(caloHitVector.begin(), caloHitVector.end(), LArClusterHelper::SortHitsByPosition);
+
+                    for (const CaloHit *const pCaloHit : caloHitVector)
+                    {
+                        if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) < projectedVtxPosition)
+                            beforeVtxEnergy += pCaloHit->GetElectromagneticEnergy();
+                            
+                        else if (pCaloHit->GetPositionVector().GetDotProduct(showerDirection) > projectedVtxPosition)
+                            afterVtxEnergy += pCaloHit->GetElectromagneticEnergy();
+                    }
+                }
+                
+                if (beforeVtxEnergy + afterVtxEnergy > 0.f)
+                    newShowerEnergyAsymmetry = std::fabs(afterVtxEnergy - beforeVtxEnergy) / (afterVtxEnergy + beforeVtxEnergy);
+                    
+                break;
+            }
         }
     }
-        
+    
     showerEnergyAsymmetry += newShowerEnergyAsymmetry;
     
     // Default: maximum asymmetry (i.e. not suppressed), zero for energy kick (i.e. not suppressed)
@@ -416,7 +429,7 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyScoresForView(const Cart
     if ((useEnergy && energyWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)) || (!useEnergy && hitWeightedDirectionSum == CartesianVector(0.f, 0.f, 0.f)))
         globalEnergyAsymmetry += 0.f;
     
-    else
+    else if (m_useGlobalEnergyAsymmetry)
         this->IncrementGlobalEnergyAsymmetry(globalEnergyAsymmetry, useEnergy, vertexPosition2D, singleClusterSlidingFitDataList, localWeightedDirectionSum); //change me
 }
 
@@ -485,9 +498,13 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyKickParameters(const Clu
         
     if (this->IsClusterShowerLike(pCluster))
     {       
-        const float showerCollapsingFactor = m_showerCollapsingConstant * (1.f - m_tempShowerLikeStrength * this->IsClusterShowerLike(pCluster, closestSlidingFitData, showerClusterMap));
+        float showerCollapsingFactor(0.f);
  
-    //    std::cout << "SHOWER COLLAPSING FACTOR: " << showerCollapsingFactor << std::endl;
+        if (m_tempShowerLikeStrength == 0.f)
+            showerCollapsingFactor = m_showerCollapsingConstant;
+            
+        else
+            showerCollapsingFactor = m_showerCollapsingConstant * (1.f - m_tempShowerLikeStrength * this->IsClusterShowerLike(pCluster, closestSlidingFitData, showerClusterMap));
  
         totEnergyKick += m_showerDeweightingConstant * pCluster->GetElectromagneticEnergy() * 
                         (showerCollapsingFactor * impactParameter + m_xOffset) / (displacement + m_rOffset);
@@ -515,14 +532,14 @@ void EnergyKickVertexSelectionAlgorithm::IncrementEnergyKickParameters(const Clu
 float EnergyKickVertexSelectionAlgorithm::IsClusterShowerLike(const Cluster *const pCluster, const SlidingFitData &closestSlidingFitData, const ShowerClusterMap &showerClusterMap) const
 {
     if (pCluster->GetParticleId() != E_MINUS || LArClusterHelper::GetLength(pCluster) >= m_minShowerSpineLength)
-        return 1.f;
+        return 0.f;
     
     auto findIter = showerClusterMap.find(pCluster);
-    if (findIter == showerClusterMap.end()) // it's a tiny bit of shower that was too crap to incorporate into a shower, so we definitely want to collapse it
-        return 1.f;
+    if (findIter == showerClusterMap.end()) // it's a tiny bit of shower that was too crap to incorporate into a shower
+        return 0.f;
      
     if (closestSlidingFitData.GetClusterVector().empty())
-        return 1.f;
+        return 0.f;
         
     const ShowerCluster &showerCluster = findIter->second;
     
@@ -633,7 +650,24 @@ bool EnergyKickVertexSelectionAlgorithm::IsClusterShowerLike(const Cluster *cons
     if (findIter != m_showerLikeClusterMap.end())
         return findIter->second;
     
-    bool isClusterShowerLike = (pCluster->GetParticleId() == E_MINUS && LArClusterHelper::GetLength(pCluster) < m_minShowerSpineLength);
+    bool isClusterShowerLike(false);
+    
+    if (m_cheatTrackShowerId)  
+    {          
+        // V1
+        const MCParticle *const pMCParticle(MCParticleHelper::GetMainMCParticle(pCluster));                                                                           
+        isClusterShowerLike = (PHOTON == pMCParticle->GetParticleId()) || (E_MINUS == std::abs(pMCParticle->GetParticleId())); 
+
+        /* V2
+        const MCParticle *const pMCParticle(MCParticleHelper::GetMainMCParticle(pCluster));                                                                     
+        const MCParticle *const pPrimaryMCParticle(LArMCParticleHelper::GetPrimaryMCParticle(pMCParticle)); 
+        isClusterShowerLike = (PHOTON == pPrimaryMCParticle->GetParticleId()) || (E_MINUS == std::abs(pPrimaryMCParticle->GetParticleId())); 
+        */
+    }                                                                                                                                                           
+
+    else
+        isClusterShowerLike = (pCluster->GetParticleId() == E_MINUS && LArClusterHelper::GetLength(pCluster) < m_minShowerSpineLength);
+    
     m_showerLikeClusterMap.emplace(pCluster, isClusterShowerLike);
     
     return isClusterShowerLike;
@@ -705,10 +739,10 @@ float EnergyKickVertexSelectionAlgorithm::CalculateEnergyAsymmetry(const bool us
     }
 
     // Use energy metrics if possible, otherwise fall back on hit counting.
-    const float totHitEnergy(beforeVtxHitEnergy + beforeVtxHitEnergy);
+    const float totHitEnergy(beforeVtxHitEnergy + afterVtxHitEnergy);
     const unsigned int totHitCount(beforeVtxHitCount + afterVtxHitCount);
     
-    if (useEnergyMetrics && (totHitEnergy > std::numeric_limits<float>::max())) // ATTN!
+    if (useEnergyMetrics && (!m_useHitCountingError && totHitEnergy > std::numeric_limits<float>::epsilon()))
         return std::fabs((afterVtxHitEnergy - beforeVtxHitEnergy)) / totHitEnergy;
 
     if (0 == totHitCount)
@@ -873,6 +907,18 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
         
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "UseShowerClusterNumber", m_useShowerClusterNumber));  
+        
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "UseHitCountingError", m_useHitCountingError));
+
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "UseHitCounting", m_useHitCounting));
+  
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
+        "CheatTrackShowerId", m_cheatTrackShowerId));
+        
+        
         
     return VertexSelectionBaseAlgorithm::ReadSettings(xmlHandle);
 }

@@ -259,6 +259,10 @@ private:
     bool m_useShowerClusteringApproximation;
     bool m_useClosestShowerCluster;
     bool m_useShowerClusterNumber;
+    
+    bool m_useHitCountingError;
+    bool m_useHitCounting;
+    bool m_cheatTrackShowerId;
 };
 
 //------------------------------------------------------------------------------------------------------------------------------------------
