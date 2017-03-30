@@ -20,6 +20,7 @@
 #include "larpandoracontent/LArObjects/LArMCParticle.h"
 
 #include <fstream>
+#include <tuple>
 
 using namespace pandora;
 
@@ -54,8 +55,22 @@ EnergyKickVertexSelectionAlgorithm::EnergyKickVertexSelectionAlgorithm() :
     m_fastHistogramNPhiBins(200),
     m_fastHistogramPhiMin(-1.1f * M_PI),
     m_fastHistogramPhiMax(+1.1f * M_PI),
-    m_enableFolding(true)
+    m_enableFolding(true),
+    
+    m_beamDeweightingConstant(0.4),
+    m_globalAsymmetryConstant(1.f),
+    m_showerAsymmetryConstant(1.f),
+    m_asymmetryConstant(3.f),
+    
+    m_trainTypeOne(false),
+    m_trainTypeTwo(false)
 {
+    m_supportVectors = this->GetSupportVectors();
+    m_modifiedAlphas = this->GetModifiedAlphas();
+    m_svMu = this->GetSVMu();
+    m_svSigma = this->GetSVSigma();
+    m_svBias = this->GetSVBias();
+    m_svScale = this->GetSVScale();
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -92,7 +107,8 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
     LArMonitoringHelper::MCContributionMap mcToGoodTrueHitListMap;
     LArMonitoringHelper::GetMCParticleToCaloHitMatches(&goodCaloHitList, mcToPrimaryMCMap, goodHitToPrimaryMCMap, mcToGoodTrueHitListMap);
     
-    VertexScoreList tmpVertexScoreList;
+    VertexInfoVector vertexInfoVector;
+    VertexInfoVector allVerticesInfoVector;
     
     
     ClusterList clustersU, clustersV, clustersW;
@@ -134,6 +150,8 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
     const float eventHitShoweryness = this->GetEventHitShoweryness(clustersU, clustersV, clustersW);
     const float eventClusterShoweryness = this->GetEventClusterShoweryness(clustersU, clustersV, clustersW);
     
+    EventInputs eventInputs(eventHitShoweryness, eventClusterShoweryness);
+    
     float bestFastScore(0.f);
     float rPhiScore(0.f);
     
@@ -141,14 +159,23 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
     {
         const float vertexMinZ(std::max(pVertex->GetPosition().GetZ(), beamConstants.GetMinZCoordinate()));
         const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(-(vertexMinZ - beamConstants.GetMinZCoordinate()) * beamConstants.GetDecayConstant()) : 1.f);
+        const float beamDeweighting(this->IsBeamModeOn() ? -(vertexMinZ - beamConstants.GetMinZCoordinate()) * beamConstants.GetDecayConstant() : 0.f);
 
         float energyKick(0.f), energyAsymmetry(0.f), globalEnergyAsymmetry(0.f), showerEnergyAsymmetry(0.f);
         this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_U), energyKick, energyAsymmetry, globalEnergyAsymmetry, showerClusterMapU, showerEnergyAsymmetry, singleClusterSlidingFitDataListU);
         this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_V), energyKick, energyAsymmetry, globalEnergyAsymmetry, showerClusterMapV, showerEnergyAsymmetry, singleClusterSlidingFitDataListV);
         this->IncrementEnergyScoresForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W), energyKick, energyAsymmetry, globalEnergyAsymmetry, showerClusterMapW, showerEnergyAsymmetry, singleClusterSlidingFitDataListW);
 
-        tmpVertexScoreList
+        const float energyKickScore(-energyKick / m_epsilon);
+        const float energyAsymmetryScore(energyAsymmetry / m_asymmetryConstant);
+        const float globalEnergyAsymmetryScore(globalEnergyAsymmetry / m_globalAsymmetryConstant);
+        const float showerEnergyAsymmetryScore(showerEnergyAsymmetry / m_showerAsymmetryConstant);
 
+        const float oldVertexScore = beamDeweighting + energyKickScore + energyAsymmetryScore + globalEnergyAsymmetryScore + showerEnergyAsymmetryScore;
+
+        
+
+    
         energyAsymmetry /= 3.f;
         globalEnergyAsymmetry /= 3.f;
         showerEnergyAsymmetry /= 3.f;
@@ -194,6 +221,11 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
                                       this->GetMidwayScore(kernelEstimateU, kernelEstimateV, kernelEstimateW);
         }
         
+        TrainingSetInputs trainingSetInputs(beamDeweightingScore, rPhiScore, energyKick, energyAsymmetry, globalEnergyAsymmetry, showerEnergyAsymmetry);
+
+        allVerticesInfoVector.emplace_back(pVertex, trainingSetInputs, 0.f, "", 0.f);
+        
+        
         //-------------------------------------------------------------------------------------------------------------------------------
         std::string interactionType;
         float mcVertexDr(std::numeric_limits<float>::max());
@@ -213,40 +245,391 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
             }
         }
 
-    
-    
         //-------------------------------------------------------------------------------------------------------------------------------
         
         if (mcVertexDr != std::numeric_limits<float>::max())
         {
-            /*
-            std::cout << "Beam deweighting:          " << beamDeweightingScore << std::endl;
-            std::cout << "r/phi:                     " << rPhiScore << std::endl;
-            std::cout << "Energy kick:               " << energyKick << std::endl;
-            std::cout << "Energy asymmetry:          " << energyAsymmetry << std::endl;
-            std::cout << "Global energy asym:        " << globalEnergyAsymmetry << std::endl;
-            std::cout << "Shower energy asym:        " << showerEnergyAsymmetry << std::endl;
-            std::cout << "Event hit showeryness:     " << eventHitShoweryness << std::endl;
-            std::cout << "Event cluster showeryness: " << eventClusterShoweryness << std::endl;
-            std::cout << "    => Vertex dr:          " << mcVertexDr << std::endl;
-            std::cout << "Interaction type:          " << interactionType << std::endl;
-            std::cout << std::endl;
+            vertexInfoVector.emplace_back(pVertex, trainingSetInputs, oldVertexScore, interactionType, mcVertexDr);
+            if (m_trainTypeOne)
+            {
+                /*
+                std::cout << "Beam deweighting:          " << beamDeweightingScore << std::endl;
+                std::cout << "r/phi:                     " << rPhiScore << std::endl;
+                std::cout << "Energy kick:               " << energyKick << std::endl;
+                std::cout << "Energy asymmetry:          " << energyAsymmetry << std::endl;
+                std::cout << "Global energy asym:        " << globalEnergyAsymmetry << std::endl;
+                std::cout << "Shower energy asym:        " << showerEnergyAsymmetry << std::endl;
+                std::cout << "Event hit showeryness:     " << eventHitShoweryness << std::endl;
+                std::cout << "Event cluster showeryness: " << eventClusterShoweryness << std::endl;
+                std::cout << "    => Vertex dr:          " << mcVertexDr << std::endl;
+                std::cout << "Interaction type:          " << interactionType << std::endl;
+                std::cout << std::endl;
+                
+                std::cout << m_trainingSetPrefix + interactionType + "_outputs.txt" << std::endl;
+                */
             
-            std::cout << m_trainingSetPrefix + interactionType + "_outputs.txt" << std::endl;
-            */
-            
-            std::ofstream inputsFile;
-            inputsFile.open(m_trainingSetPrefix + interactionType + "_inputs.txt", std::ios_base::app);
-            inputsFile << beamDeweightingScore << " " << rPhiScore << " " << energyKick << " " << energyAsymmetry << " " << globalEnergyAsymmetry <<
-                        " " << showerEnergyAsymmetry << " " << eventHitShoweryness << " " << eventClusterShoweryness << "\n"; 
-            
-            std::ofstream outputsFile;
-            outputsFile.open(m_trainingSetPrefix + interactionType + "_outputs.txt", std::ios_base::app);
-            outputsFile << mcVertexDr << "\n";
+                std::ofstream inputsFile;
+                inputsFile.open(m_trainingSetPrefix + interactionType + "_inputs.txt", std::ios_base::app);
+                inputsFile << beamDeweightingScore << " " << rPhiScore << " " << energyKick << " " << energyAsymmetry << " " << globalEnergyAsymmetry <<
+                            " " << showerEnergyAsymmetry << " " << eventHitShoweryness << " " << eventClusterShoweryness << "\n"; 
+                
+                std::ofstream outputsFile;
+                outputsFile.open(m_trainingSetPrefix + interactionType + "_outputs.txt", std::ios_base::app);
+                outputsFile << mcVertexDr << "\n";
+            }
             
         }
     }
+    
+    if (m_trainTypeOne)
+        return;
+    
+    VertexInfoVector favouriteVertices;
+    
+    std::sort(vertexInfoVector.begin(), vertexInfoVector.end(), 
+              [](const VertexInfo &lhs, const VertexInfo &rhs)
+              {
+                  return std::get<2>(lhs) > std::get<2>(rhs);
+              });
 
+    for (const VertexInfo &vertexInfo : vertexInfoVector)
+    {
+        const Vertex * const pVertex = std::get<0>(vertexInfo);
+        
+        bool farEnoughAway(true);
+        
+        for (const VertexInfo &item : favouriteVertices)
+        {
+            const Vertex * const pListedVertex = std::get<0>(item);
+            
+            if (pListedVertex == pVertex)
+            {
+                farEnoughAway = false;
+                break;
+            }
+            
+            const float distance = (pListedVertex->GetPosition() - pVertex->GetPosition()).GetMagnitude();
+            
+            if (distance <= 5.f)
+            {
+                farEnoughAway = false;
+                break;
+            }
+        }
+        
+        if (farEnoughAway)
+            favouriteVertices.push_back(vertexInfo);
+            
+        if (favouriteVertices.size() >= 5)
+            break;
+    }
+        
+    if (m_trainTypeTwo)
+    {
+        if (favouriteVertices.size() == 5)
+        {
+            float closestDr = std::numeric_limits<float>::max();
+            const Vertex *pBestVertex(NULL);
+            
+            for (const VertexInfo &item : favouriteVertices)
+            {
+                const float dr = std::get<4>(item);
+                
+                if (dr < closestDr)
+                {
+                    closestDr = dr;
+                    pBestVertex = std::get<0>(item);
+                }
+            }
+            
+            if (pBestVertex)
+            {
+                std::string interactionType = std::get<3>(favouriteVertices.front());
+                
+                std::ofstream inputsFile;
+                inputsFile.open(m_trainingSetPrefix + interactionType + "_inputs.txt", std::ios_base::app);
+                
+                std::ofstream outputsFile;
+                outputsFile.open(m_trainingSetPrefix + interactionType + "_outputs.txt", std::ios_base::app);
+                
+                const auto favouriteVerticesCopy = favouriteVertices;
+                
+                int vtxNumber(1);
+                for (const VertexInfo &item : favouriteVertices)
+                {
+                    std::cout << "Vertex number " << std::to_string(vtxNumber++) << " : " << std::get<0>(item) << std::endl;
+                    
+                    /*
+                    const CartesianVector position = std::get<0>(item)->GetPosition();
+                    const CartesianVector positionU = LArGeometryHelper::ProjectPosition(this->GetPandora(), position, TPC_VIEW_U);
+                    const CartesianVector positionV = LArGeometryHelper::ProjectPosition(this->GetPandora(), position, TPC_VIEW_V);
+                    const CartesianVector positionW = LArGeometryHelper::ProjectPosition(this->GetPandora(), position, TPC_VIEW_W);
+                    
+                    PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &positionU, "VTX " + std::to_string(vtxNumber) + " U", RED, 1);
+                    PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &positionV, "VTX " + std::to_string(vtxNumber) + " V", RED, 1);
+                    PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &positionW, "VTX " + std::to_string(vtxNumber) + " W", RED, 1);
+                    
+                    ++vtxNumber;
+                    */
+                    
+                    int isWinningVertex = (std::get<0>(item) == pBestVertex) ? 1 : 0;
+                    TrainingSetInputs trainingSetInputs = std::get<1>(item);
+                    
+                    std::cout << "        -> Number " << std::get<0>(trainingSetInputs) << std::endl;
+                    
+                   // const float mcVertexDr = std::get<4>(item);
+                   
+                   inputsFile << std::get<0>(eventInputs) << " " <<
+                                 std::get<1>(eventInputs) << " " <<
+                                 std::get<0>(trainingSetInputs) << " " <<
+                                 std::get<1>(trainingSetInputs) << " " <<
+                                 std::get<2>(trainingSetInputs) << " " <<
+                                 std::get<3>(trainingSetInputs) << " " <<
+                                 std::get<4>(trainingSetInputs) << " " <<
+                                 std::get<5>(trainingSetInputs);
+                            
+                    
+                    /*
+                    std::cout << " *** THIS VERTEX *** " << std::endl;
+                    std::cout << "Beam deweighting:          " << std::get<0>(trainingSetInputs) << std::endl;
+                    std::cout << "r/phi:                     " << std::get<1>(trainingSetInputs) << std::endl;
+                    std::cout << "Energy kick:               " << std::get<2>(trainingSetInputs) << std::endl;
+                    std::cout << "Energy asymmetry:          " << std::get<3>(trainingSetInputs) << std::endl;
+                    std::cout << "Global energy asym:        " << std::get<4>(trainingSetInputs) << std::endl;
+                    std::cout << "Shower energy asym:        " << std::get<5>(trainingSetInputs) << std::endl;
+                    std::cout << "Event hit showeryness:     " << std::get<6>(trainingSetInputs) << std::endl;
+                    std::cout << "Event cluster showeryness: " << std::get<7>(trainingSetInputs) << std::endl;
+                    std::cout << "    => Vertex dr:          " << mcVertexDr << std::endl;
+                    std::cout << "    => Is winning vertex:  " << isWinningVertex << std::endl;
+                    std::cout << "Interaction type:          " << interactionType << std::endl;
+                    std::cout << std::endl;
+                    
+                    std::cout << m_trainingSetPrefix + interactionType + "_outputs.txt" << std::endl;
+                    */
+                    
+                    int innerVertexNumber(1);
+                    for (const VertexInfo &otherItem : favouriteVerticesCopy)
+                    {
+                        std::cout << "    -> Vertex number " << std::to_string(innerVertexNumber) << " : " << std::get<0>(otherItem) << std::endl;
+                        
+                        if (std::get<0>(otherItem) != std::get<0>(item))
+                        {
+                            
+                        std::cout << "    -> Vertex number " << std::to_string(innerVertexNumber++) << " : " << std::get<0>(otherItem) << std::endl;
+                        TrainingSetInputs otherTrainingSetInputs = std::get<1>(otherItem);
+                        std::cout << "        -> Number " << std::get<0>(otherTrainingSetInputs) << std::endl;
+                        
+                        
+                        //int otherIsWinningVertex = (std::get<0>(otherItem) == pBestVertex) ? 1 : 0;
+                        //std::string otherInteractionType = std::get<3>(otherItem);
+                        //const float otherMcVertexDr = std::get<4>(otherItem);
+                        
+                        inputsFile << " " << std::get<0>(otherTrainingSetInputs)
+                                   << " " << std::get<1>(otherTrainingSetInputs)
+                                   << " " << std::get<2>(otherTrainingSetInputs)
+                                   << " " << std::get<3>(otherTrainingSetInputs)
+                                   << " " << std::get<4>(otherTrainingSetInputs)
+                                   << " " << std::get<5>(otherTrainingSetInputs);
+                        
+                        /*
+                        std::cout << "     *** OTHER VERTEX *** " << std::endl;
+                        std::cout << "    Beam deweighting:          " << std::get<0>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "    r/phi:                     " << std::get<1>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "    Energy kick:               " << std::get<2>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "    Energy asymmetry:          " << std::get<3>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "    Global energy asym:        " << std::get<4>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "    Shower energy asym:        " << std::get<5>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "    Event hit showeryness:     " << std::get<6>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "    Event cluster showeryness: " << std::get<7>(otherTrainingSetInputs) << std::endl;
+                        std::cout << "        => Vertex dr:          " << otherMcVertexDr << std::endl;
+                        std::cout << "        => Is winning vertex:  " << otherIsWinningVertex << std::endl;
+                        std::cout << "    Interaction type:          " << otherInteractionType << std::endl;
+                        std::cout << std::endl;
+                        
+                        std::cout << "    " << m_trainingSetPrefix + otherInteractionType + "_outputs.txt" << std::endl;
+                        */
+                        }
+                    }
+                    
+                    inputsFile << "\n";
+                    outputsFile << isWinningVertex << "\n";
+                    
+                    /*
+                    
+                    inputsFile << beamDeweightingScore << " " << rPhiScore << " " << energyKick << " " << energyAsymmetry << " " << globalEnergyAsymmetry <<
+                                " " << showerEnergyAsymmetry << " " << eventHitShoweryness << " " << eventClusterShoweryness << "\n"; 
+                    
+                    
+                    outputsFile << mcVertexDr << "\n";
+                    */
+                    
+                }
+            }
+        }
+    }
+    
+    if (m_trainTypeTwo)
+        return;
+    
+    if (favouriteVertices.empty())
+        throw;
+        
+        for (const auto &item : favouriteVertices)
+    {
+        const Vertex * const pVertex(std::get<0>(item));
+        std::cout << "Considering vertiuces " << pVertex << std::endl;
+    }
+
+    for (const auto &item : favouriteVertices)
+    {
+        const Vertex * const pVertex(std::get<0>(item));
+        TrainingSetInputsList trainingSetInputsList{std::get<1>(item)};
+        
+        for (const auto &otherItem : favouriteVertices)
+        {
+            const Vertex * const pOtherVertex(std::get<0>(otherItem));
+            
+            if (pOtherVertex == pVertex)
+                continue;
+            
+            trainingSetInputsList.push_back(std::get<1>(otherItem));
+        }
+        
+        const double vertexScore = this->GetSVMScore(eventInputs, trainingSetInputsList);
+        
+        std::cout << "*** SCORE FOR THIS VERTEX : " << vertexScore << std::endl;
+        
+        vertexScoreList.emplace_back(pVertex, vertexScore);
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+double EnergyKickVertexSelectionAlgorithm::GetSVMScore(const EventInputs &eventInputs, TrainingSetInputsList trainingSetInputsList) const
+{
+    if (trainingSetInputsList.empty())
+        throw;
+    
+    std::cout << trainingSetInputsList.size() << std::endl;
+    
+    while (trainingSetInputsList.size() < 5)
+    {
+        std::cout << "Making it bigger" << std::endl;
+        trainingSetInputsList.push_back(trainingSetInputsList.front());
+        
+    }
+    
+    double totalScore(0.f);
+    
+    for (int i = 0; i < m_supportVectors.size(); ++i)
+    {
+        const FeatureVector supportVector(m_supportVectors.at(i));
+        
+        // Produce the both normalized and scaled features.
+        std::vector<double> scaledFeatures;
+        
+        scaledFeatures.push_back((std::get<0>(eventInputs) - std::get<0>(m_svMu)) / (std::get<0>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<1>(eventInputs) - std::get<1>(m_svMu)) / (std::get<1>(m_svSigma) * m_svScale));
+        
+        const TrainingSetInputs &trainingSetInputs1 = trainingSetInputsList.at(0);
+        const TrainingSetInputs &trainingSetInputs2 = trainingSetInputsList.at(1);
+        const TrainingSetInputs &trainingSetInputs3 = trainingSetInputsList.at(2);
+        const TrainingSetInputs &trainingSetInputs4 = trainingSetInputsList.at(3);
+        const TrainingSetInputs &trainingSetInputs5 = trainingSetInputsList.at(4);
+        
+        scaledFeatures.push_back((std::get<0>(trainingSetInputs1) - std::get<2>(m_svMu)) / (std::get<2>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<1>(trainingSetInputs1) - std::get<3>(m_svMu)) / (std::get<3>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<2>(trainingSetInputs1) - std::get<4>(m_svMu)) / (std::get<4>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<3>(trainingSetInputs1) - std::get<5>(m_svMu)) / (std::get<5>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<4>(trainingSetInputs1) - std::get<6>(m_svMu)) / (std::get<6>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<5>(trainingSetInputs1) - std::get<7>(m_svMu)) / (std::get<7>(m_svSigma) * m_svScale));
+        
+        scaledFeatures.push_back((std::get<0>(trainingSetInputs2) - std::get<8>(m_svMu)) / (std::get<8>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<1>(trainingSetInputs2) - std::get<9>(m_svMu)) / (std::get<9>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<2>(trainingSetInputs2) - std::get<10>(m_svMu)) / (std::get<10>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<3>(trainingSetInputs2) - std::get<11>(m_svMu)) / (std::get<11>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<4>(trainingSetInputs2) - std::get<12>(m_svMu)) / (std::get<12>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<5>(trainingSetInputs2) - std::get<13>(m_svMu)) / (std::get<13>(m_svSigma) * m_svScale));
+        
+        scaledFeatures.push_back((std::get<0>(trainingSetInputs3) - std::get<14>(m_svMu)) / (std::get<14>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<1>(trainingSetInputs3) - std::get<15>(m_svMu)) / (std::get<15>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<2>(trainingSetInputs3) - std::get<16>(m_svMu)) / (std::get<16>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<3>(trainingSetInputs3) - std::get<17>(m_svMu)) / (std::get<17>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<4>(trainingSetInputs3) - std::get<18>(m_svMu)) / (std::get<18>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<5>(trainingSetInputs3) - std::get<19>(m_svMu)) / (std::get<19>(m_svSigma) * m_svScale));
+        
+        scaledFeatures.push_back((std::get<0>(trainingSetInputs4) - std::get<20>(m_svMu)) / (std::get<20>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<1>(trainingSetInputs4) - std::get<21>(m_svMu)) / (std::get<21>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<2>(trainingSetInputs4) - std::get<22>(m_svMu)) / (std::get<22>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<3>(trainingSetInputs4) - std::get<23>(m_svMu)) / (std::get<23>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<4>(trainingSetInputs4) - std::get<24>(m_svMu)) / (std::get<24>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<5>(trainingSetInputs4) - std::get<25>(m_svMu)) / (std::get<25>(m_svSigma) * m_svScale));
+        
+        scaledFeatures.push_back((std::get<0>(trainingSetInputs5) - std::get<26>(m_svMu)) / (std::get<26>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<1>(trainingSetInputs5) - std::get<27>(m_svMu)) / (std::get<27>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<2>(trainingSetInputs5) - std::get<28>(m_svMu)) / (std::get<28>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<3>(trainingSetInputs5) - std::get<29>(m_svMu)) / (std::get<29>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<4>(trainingSetInputs5) - std::get<30>(m_svMu)) / (std::get<30>(m_svSigma) * m_svScale));
+        scaledFeatures.push_back((std::get<5>(trainingSetInputs5) - std::get<31>(m_svMu)) / (std::get<31>(m_svSigma) * m_svScale));
+        
+        // Get the bits of the support vector.
+        // Produce the both normalized and scaled features.
+        std::vector<double> supportVectorElements;
+        
+        supportVectorElements.push_back(std::get<0>(supportVector));
+        supportVectorElements.push_back(std::get<1>(supportVector));
+        supportVectorElements.push_back(std::get<2>(supportVector));
+        supportVectorElements.push_back(std::get<3>(supportVector));
+        supportVectorElements.push_back(std::get<4>(supportVector));
+        supportVectorElements.push_back(std::get<5>(supportVector));
+        supportVectorElements.push_back(std::get<6>(supportVector));
+        supportVectorElements.push_back(std::get<7>(supportVector));
+        supportVectorElements.push_back(std::get<8>(supportVector));
+        supportVectorElements.push_back(std::get<9>(supportVector));
+        supportVectorElements.push_back(std::get<10>(supportVector));
+        supportVectorElements.push_back(std::get<11>(supportVector));
+        supportVectorElements.push_back(std::get<12>(supportVector));
+        supportVectorElements.push_back(std::get<13>(supportVector));
+        supportVectorElements.push_back(std::get<14>(supportVector));
+        supportVectorElements.push_back(std::get<15>(supportVector));
+        supportVectorElements.push_back(std::get<16>(supportVector));
+        supportVectorElements.push_back(std::get<17>(supportVector));
+        supportVectorElements.push_back(std::get<18>(supportVector));
+        supportVectorElements.push_back(std::get<19>(supportVector));
+        supportVectorElements.push_back(std::get<20>(supportVector));
+        supportVectorElements.push_back(std::get<21>(supportVector));
+        supportVectorElements.push_back(std::get<22>(supportVector));
+        supportVectorElements.push_back(std::get<23>(supportVector));
+        supportVectorElements.push_back(std::get<24>(supportVector));
+        supportVectorElements.push_back(std::get<25>(supportVector));
+        supportVectorElements.push_back(std::get<26>(supportVector));
+        supportVectorElements.push_back(std::get<27>(supportVector));
+        supportVectorElements.push_back(std::get<28>(supportVector));
+        supportVectorElements.push_back(std::get<29>(supportVector));
+        supportVectorElements.push_back(std::get<30>(supportVector));
+        supportVectorElements.push_back(std::get<31>(supportVector));
+        
+        totalScore += this->EvaluatePolynomialKernel(scaledFeatures, supportVectorElements) * m_modifiedAlphas.at(i);
+    }
+    
+    return totalScore + m_svBias;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+double EnergyKickVertexSelectionAlgorithm::EvaluatePolynomialKernel(std::vector<double> x, std::vector<double> y) const
+{
+    double total(0.f);
+    
+    if (x.size() != y.size())
+        throw;
+        
+    for (int i = 0; i < x.size(); ++i)
+        total += x.at(i) * y.at(i);
+    
+    total += 1.f;
+    
+    return total*total;
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
