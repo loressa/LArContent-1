@@ -137,6 +137,13 @@
 #include "larpandoracontent/LArVertex/EnergyKickVertexSelectionAlgorithm.h"
 #include "larpandoracontent/LArVertex/HitAngleVertexSelectionAlgorithm.h"
 
+#include "larpandoracontent/LArVertex/SVMVertexSelectionAlgorithm.h"
+#include "larpandoracontent/LArVertex/EnergyKickFeatureTool.h"
+#include "larpandoracontent/LArVertex/LocalAsymmetryFeatureTool.h"
+#include "larpandoracontent/LArVertex/GlobalAsymmetryFeatureTool.h"
+#include "larpandoracontent/LArVertex/ShowerAsymmetryFeatureTool.h"
+#include "larpandoracontent/LArVertex/RPhiFeatureTool.h"
+
 /**
  *  @brief  LArContent class
  */
@@ -223,6 +230,7 @@ public:
         d("LArNeutrinoParent",                      lar_content::NeutrinoParentAlgorithm::Factory)                              \
         d("LArCandidateVertexCreation",             lar_content::CandidateVertexCreationAlgorithm::Factory)                     \
         d("LArEnergyKickVertexSelection",           lar_content::EnergyKickVertexSelectionAlgorithm::Factory)                   \
+        d("LArSVMVertexSelection",                  lar_content::SVMVertexSelectionAlgorithm::Factory)                          \
         d("LArHitAngleVertexSelection",             lar_content::HitAngleVertexSelectionAlgorithm::Factory)
 
     #define LAR_ALGORITHM_TOOL_LIST(d)                                                                                          \
@@ -258,6 +266,11 @@ public:
         d("LArTracksCrossingGaps",                  lar_content::TracksCrossingGapsTool::Factory)                               \
         d("LArTrackSplitting",                      lar_content::TrackSplittingTool::Factory)                                   \
         d("LArTransverseTensorVisualization",       lar_content::TransverseTensorVisualizationTool::Factory)                    \
+        d("LArEnergyKickFeature",                   lar_content::EnergyKickFeatureTool::Factory)                                \
+        d("LArLocalAsymmetryFeature",               lar_content::LocalAsymmetryFeatureTool::Factory)                            \
+        d("LArGlobalAsymmetryFeature",              lar_content::GlobalAsymmetryFeatureTool::Factory)                           \
+        d("LArShowerAsymmetryFeature",              lar_content::ShowerAsymmetryFeatureTool::Factory)                           \
+        d("LArRPhiFeature",                         lar_content::RPhiFeatureTool::Factory)                           \
         d("LArUndershootTracks",                    lar_content::UndershootTracksTool::Factory)
 
     #define LAR_PARTICLE_ID_LIST(d)                                                                                             \
