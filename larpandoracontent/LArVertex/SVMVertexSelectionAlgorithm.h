@@ -10,7 +10,7 @@
 
 #include "Api/PandoraContentApi.h"
 
-#include "Objects/SupportVectorMachine.h"
+#include "larpandoracontent/LArObjects/LArSupportVectorMachine.h"
 
 #include "larpandoracontent/LArObjects/LArMCParticle.h"
 #include "larpandoracontent/LArObjects/LArTwoDSlidingFitResult.h"
@@ -76,13 +76,24 @@ public:
         /**
          *  @brief  Constructor
          * 
-         *  @param  eventHitShoweryness the event hit showeryness feature
-         *  @param  eventClusterShoweryness the event cluster showeryness feature
+         *  @param  eventShoweryness the event showeryness feature
+         *  @param  eventEnergy the energy of the event
+         *  @param  eventVolume the volume of the event
+         *  @param  longitudinality the longitudinality of the event
+         *  @param  nHits the number of hits in the event
+         *  @param  nClusters the number of clusters in the event
+         *  @param  nCandidates the total number of vertex candidates
          */
-        EventFeatureInfo(const float eventHitShoweryness, const float eventClusterShoweryness);
+        EventFeatureInfo(const float eventShoweryness, const float eventEnergy, const float eventVolume, const float longitudinality,
+            const unsigned int nHits, const unsigned int nClusters, const unsigned int nCandidates);
                           
-        float    m_eventHitShoweryness;        ///< The event hit showeryness feature
-        float    m_eventClusterShoweryness;    ///< The event cluster showeryness feature
+        float           m_eventShoweryness;        ///< The event showeryness feature
+        float           m_eventEnergy;             ///< The event energy
+        float           m_eventVolume;             ///< The volume of the event
+        float           m_longitudinality;         ///< The longitudinality of the event
+        unsigned int    m_nHits;                   ///< The number of hits in the event
+        unsigned int    m_nClusters;               ///< The number of clusters in the event
+        unsigned int    m_nCandidates;             ///< The total number of vertex candidates
     };
     
     //--------------------------------------------------------------------------------------------------------------------------------------
@@ -99,6 +110,7 @@ private:
     typedef std::pair<pandora::CartesianVector, pandora::CartesianVector> ClusterEndPoints;
     typedef std::map<const pandora::Cluster *const, ClusterEndPoints> ClusterEndPointsMap;
     typedef std::vector<pandora::FloatVector> FeatureListVector;
+    typedef std::vector<pandora::VertexVector> VectorOfVertexVectors; 
     
     /**
      *  @brief  Get the vertex score list
@@ -148,11 +160,12 @@ private:
      *  @param  clusterListU the U-view cluster list
      *  @param  clusterListV the V-view cluster list
      *  @param  clusterListW the W-view cluster list
-     *  @param  eventHitShoweryness the event hit showeryness parameter to populate
-     *  @param  eventClusterShoweryness the event cluster showeryness parameter to populate
+     *  @param  vertexVector the vector of vertex candidates
+     * 
+     *  @return the event feature info object
      */
-    void CalculateEventParameters(const pandora::ClusterList &clusterListU, const pandora::ClusterList &clusterListV, 
-        const pandora::ClusterList &clusterListW, float &eventHitShoweryness, float &eventClusterShoweryness) const;
+    EventFeatureInfo CalculateEventFeatures(const pandora::ClusterList &clusterListU, const pandora::ClusterList &clusterListV, 
+        const pandora::ClusterList &clusterListW, const pandora::VertexVector &vertexVector) const;
                         
     /**
      *  @brief  Find whether a cluster is shower-like
@@ -169,12 +182,20 @@ private:
      *  @param  clusterList the cluster list
      *  @param  nShoweryHits the number of showery hits
      *  @param  nHits the number of hits
-     *  @param  nShoweryClusters the number of showery clusters
-     *  @param  nClusters the number of clusters
+     *  @param  eventEnergy the event energy
      */
     void IncrementShoweryParameters(const pandora::ClusterList &clusterList, unsigned int &nShoweryHits, unsigned int &nHits, 
-        unsigned int &nShoweryClusters, unsigned int &nClusters) const;
+       float &eventEnergy) const;
     
+    /**
+     *  @brief  Get the span of a set of vertex candidates in a certain dimension
+     * 
+     *  @param  vertexVector the vector of vertex candidates
+     *  @param  getCoord the function to extract the required coordinate from the vertex
+     * 
+     *  @return the span
+     */
+    float GetCandidateSpan(const pandora::VertexVector &vertexVector, const std::function<float(const pandora::Vertex *const)> &getCoord) const;
     
     /**
      *  @brief  Populate the vertex feature info map for a given vertex
@@ -215,6 +236,8 @@ private:
      *  @param  bestVertexDr dR of the best vertex
      */
     void GetBestVertex(const pandora::VertexList &topNVertices, const pandora::Vertex *&pBestVertex, float &bestVertexDr) const;
+    
+    void GetCheatedVertex(const pandora::VertexVector &vertexVector, const pandora::Vertex *&pCheatedVertex) const; // ATTN temporary
 
     /**
      *  @brief  Generate the feature list for a given vertex
@@ -228,6 +251,14 @@ private:
      */
     pandora::FloatVector GenerateFeatureList(const EventFeatureInfo &eventFeatureInfo, const VertexFeatureInfoMap &vertexFeatureInfoMap,
         const pandora::Vertex *const pVertex, const pandora::VertexList &topNVertices) const;
+    
+    /**
+     *  @brief  Add the event features to a vector in the correct order
+     * 
+     *  @param  eventFeatureInfo the event feature info
+     *  @param  featureVector the vector of floats to append
+     */
+    void AddEventFeaturesToVector(const EventFeatureInfo &eventFeatureInfo, pandora::FloatVector &featureVector) const;
     
     /**
      *  @brief  Add the vertex features to a vector in the correct order
@@ -262,16 +293,20 @@ private:
         const pandora::VertexVector &vertexVector, VertexScoreList &finalVertexScoreList) const;
     
     VertexFeatureToolBase::FeatureToolMap m_featureToolMap;   ///< The feature tool map
-    pandora::SupportVectorMachine<32>     m_svMachine;        ///< The support vector machine
+    SupportVectorMachine<37>              m_svMachine;        ///< The support vector machine
                                                               
     std::string           m_trainingOutputFile;               ///< The training output file
     std::string           m_parameterInputFile;               ///< The parameter input file
+    std::string           m_svmName;                          ///< The name of the SVM to find
     std::string           m_mcParticleListName;               ///< The MC particle list for creating training examples
                                                               
     pandora::StringVector m_inputClusterListNames;            ///< The list of cluster list names
-                                                              
+    
+    bool                  m_classifyUsingPermutations;        ///< Whether to classify using permutations instead of top-5
     bool                  m_trainingSetMode;                  ///< Whether to train
     bool                  m_allowClassifyDuringTraining;      ///< Whether classification is allowed during training
+    bool                  m_produceAllTrainingPermutations;   ///< Whether to produce training sets with all top-N! permutations
+    float                 m_mcVertexXCorrection;              ///< The correction to the x-coordinate of the MC vertex position
                                                               
     unsigned int          m_minClusterCaloHits;               ///< The min number of hits parameter in the energy score
     unsigned int          m_slidingFitWindow;                 ///< The layer window for the sliding linear fits
@@ -292,6 +327,7 @@ private:
     
     bool m_drawThings;         ///< ATTN temporary
     bool m_cheatTrackShowerId; ///< ATTN temporary
+    bool m_cheatTheVertex;     ///< ATTN temporary
 };
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -317,9 +353,15 @@ inline SVMVertexSelectionAlgorithm::VertexFeatureInfo::VertexFeatureInfo(const f
     
 //------------------------------------------------------------------------------------------------------------------------------------------
     
-inline SVMVertexSelectionAlgorithm::EventFeatureInfo::EventFeatureInfo(const float eventHitShoweryness, const float eventClusterShoweryness) :
-    m_eventHitShoweryness(eventHitShoweryness),
-    m_eventClusterShoweryness(eventClusterShoweryness)
+inline SVMVertexSelectionAlgorithm::EventFeatureInfo::EventFeatureInfo(const float eventShoweryness, const float eventEnergy, 
+    const float eventVolume, const float longitudinality, const unsigned int nHits, const unsigned int nClusters, const unsigned int nCandidates) :
+    m_eventShoweryness(eventShoweryness),
+    m_eventEnergy(eventEnergy),
+    m_eventVolume(eventVolume),
+    m_longitudinality(longitudinality),
+    m_nHits(nHits),
+    m_nClusters(nClusters),
+    m_nCandidates(nCandidates)
 {
 }
 

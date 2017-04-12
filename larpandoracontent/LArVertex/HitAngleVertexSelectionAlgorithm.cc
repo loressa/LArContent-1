@@ -7,7 +7,7 @@
  */
 #include "Pandora/AlgorithmHeaders.h"
 
-#include "Helpers/SVMHelper.h"
+#include "larpandoracontent/LArHelpers/LArSVMHelper.h"
 
 #include "larpandoracontent/LArVertex/RPhiFeatureTool.h"
 

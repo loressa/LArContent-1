@@ -34,8 +34,8 @@ public:
     EnergyKickVertexSelectionAlgorithm();
 
 private:
-    typedef pandora::SVMFeatureToolBase<VertexSelectionBaseAlgorithm, const pandora::Vertex * const, const SlidingFitDataListMap &, 
-                                        const ClusterListMap &, const KDTreeMap &, const ShowerClusterListMap &>  VertexFeatureToolBase; ///< The base type for the vertex feature tools
+    typedef SVMFeatureToolBase<VertexSelectionBaseAlgorithm, const pandora::Vertex * const, const SlidingFitDataListMap &, 
+        const ClusterListMap &, const KDTreeMap &, const ShowerClusterListMap &>  VertexFeatureToolBase; ///< The base type for the vertex feature tools
               
 
     void GetVertexScoreList(const pandora::VertexVector &vertexVector, const BeamConstants &beamConstants, HitKDTree2D &kdTreeU,

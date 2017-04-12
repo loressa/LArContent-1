@@ -175,6 +175,13 @@ StatusCode VertexSelectionBaseAlgorithm::Run()
         if (m_replaceCurrentVertexList)
             PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, PandoraContentApi::ReplaceCurrentList<Vertex>(*this, m_outputVertexListName));
     }
+    
+    // ATTN temporary
+//    for (const Vertex * const pVertex : selectedVertexList)
+//    {
+//        const CartesianVector vertexPosition(pVertex->GetPosition());
+//        PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &vertexPosition, "Reco vertex", RED, 1);
+//    }
 
     return STATUS_CODE_SUCCESS;
 }
