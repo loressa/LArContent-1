@@ -50,7 +50,7 @@ SVMVertexSelectionAlgorithm::SVMVertexSelectionAlgorithm() : VertexSelectionBase
     m_useShowerClusteringApproximation(false),
     m_drawThings(false),         // ATTN temporary 
     m_cheatTrackShowerId(false), // ATTN temporary
-    m_cheatTheVertex(false)      // ATTN temporary
+    m_cheatTheVertex(false)       // ATTN temporary
 {
 }
 
@@ -97,11 +97,11 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
     
     const bool allowedToClassify(!m_trainingSetMode || m_allowClassifyDuringTraining);
     
+    const Vertex *pCheatedVertex(NULL);
+    this->GetCheatedVertex(vertexVector, pCheatedVertex);
+    
     if (m_cheatTheVertex) // ATTN temporary
-    {
-        const Vertex *pCheatedVertex(NULL);
-        this->GetCheatedVertex(vertexVector, pCheatedVertex);
-        
+    {    
         if (pCheatedVertex)
             vertexScoreList.emplace_back(pCheatedVertex, 1.f);
             
@@ -117,6 +117,10 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
             this->PopulateInitialScoreList(vertexFeatureInfoMap, pVertex, initialScoreList);
         
         VertexList topNVertices;
+        
+        if (pCheatedVertex)
+            topNVertices.push_back(pCheatedVertex);
+        
         this->GetTopNVertices(initialScoreList, topNVertices);
         
         const Vertex *pBestVertex(NULL);
@@ -146,7 +150,7 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
             if (allowedToClassify)
             {
                 // ATTN temporary
-                if (false)
+                if (true)
                 {
                     std::cout << "Features: ";
                     for (const float feature : featureList)
@@ -594,7 +598,7 @@ void SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &vertexVec
     
     float bestVertexDr(std::numeric_limits<float>::max());
     for (const Vertex * const pVertex : vertexVector)
-    {
+    {        
         float mcVertexDr(std::numeric_limits<float>::max());
         for (const MCParticle *const pMCNeutrino : mcNeutrinoVector)
         {
@@ -605,7 +609,7 @@ void SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &vertexVec
             if (dr < mcVertexDr)
                 mcVertexDr = dr;
         }
-        
+
         if (mcVertexDr < bestVertexDr)
         {
             bestVertexDr = mcVertexDr;
