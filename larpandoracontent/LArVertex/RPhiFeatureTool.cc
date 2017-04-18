@@ -35,7 +35,7 @@ RPhiFeatureTool::RPhiFeatureTool() :
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-float RPhiFeatureTool::Run(const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex,
+void RPhiFeatureTool::Run(SupportVectorMachine::DoubleVector &featureVector, const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex,
     const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &, const VertexSelectionBaseAlgorithm::ClusterListMap &, 
     const VertexSelectionBaseAlgorithm::KDTreeMap &kdTreeMap, const VertexSelectionBaseAlgorithm::ShowerClusterListMap &, 
     const float beamDeweightingScore, float &bestFastScore)
@@ -56,17 +56,23 @@ float RPhiFeatureTool::Run(const VertexSelectionBaseAlgorithm *const pAlgorithm,
         const float fastScore(this->GetFastScore(kernelEstimateU, kernelEstimateV, kernelEstimateW));
 
         if (m_fastScoreOnly)
-            return fastScore;
+        {
+            featureVector.push_back(fastScore);
+            return;
+        }
 
         if (beamDeweightingScore * fastScore < m_minFastScoreFraction * bestFastScore)
-            return std::numeric_limits<float>::min();
+        {
+            featureVector.push_back(std::numeric_limits<float>::min());
+            return;
+        }
 
         if (beamDeweightingScore * fastScore > bestFastScore)
             bestFastScore = beamDeweightingScore * fastScore;
     }
     
-    return m_fullScore ? this->GetFullScore(kernelEstimateU, kernelEstimateV, kernelEstimateW) : 
-        this->GetMidwayScore(kernelEstimateU, kernelEstimateV, kernelEstimateW);
+    featureVector.push_back(m_fullScore ? this->GetFullScore(kernelEstimateU, kernelEstimateV, kernelEstimateW) : 
+        this->GetMidwayScore(kernelEstimateU, kernelEstimateV, kernelEstimateW));
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------

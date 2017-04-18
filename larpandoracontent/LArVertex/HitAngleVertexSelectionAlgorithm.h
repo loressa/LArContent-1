@@ -39,7 +39,7 @@ private:
 
     pandora::StatusCode ReadSettings(const pandora::TiXmlHandle xmlHandle);
     
-    VertexFeatureToolBase::FeatureToolMap m_featureToolMap; ///< The feature tool map
+    VertexFeatureTool::FeatureToolVector m_featureToolVector; ///< The feature tool map
 };
 
 //------------------------------------------------------------------------------------------------------------------------------------------

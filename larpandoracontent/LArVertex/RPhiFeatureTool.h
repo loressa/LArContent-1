@@ -18,7 +18,7 @@ namespace lar_content
 /**
  *  @brief  RPhiFeatureTool class
  */
-class RPhiFeatureTool : public VertexSelectionBaseAlgorithm::VertexFeatureTool<float>
+class RPhiFeatureTool : public VertexSelectionBaseAlgorithm::VertexFeatureTool
 {
 public:
     /**
@@ -48,7 +48,7 @@ public:
      * 
      *  @return the r/phi feature
      */
-    float Run(const VertexSelectionBaseAlgorithm * const pAlgorithm, const pandora::Vertex * const pVertex, 
+    void Run(SupportVectorMachine::DoubleVector &featureVector, const VertexSelectionBaseAlgorithm * const pAlgorithm, const pandora::Vertex * const pVertex, 
         const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &, const VertexSelectionBaseAlgorithm::ClusterListMap &, 
         const VertexSelectionBaseAlgorithm::KDTreeMap &kdTreeMap, const VertexSelectionBaseAlgorithm::ShowerClusterListMap &,
         const float beamDeweightingScore, float &bestFastScore);

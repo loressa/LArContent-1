@@ -27,7 +27,7 @@ LocalAsymmetryFeatureTool::LocalAsymmetryFeatureTool() :
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-float LocalAsymmetryFeatureTool::Run(const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, 
+void LocalAsymmetryFeatureTool::Run(SupportVectorMachine::DoubleVector &featureVector, const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, 
     const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &slidingFitDataListMap, const VertexSelectionBaseAlgorithm::ClusterListMap &, 
     const VertexSelectionBaseAlgorithm::KDTreeMap &, const VertexSelectionBaseAlgorithm::ShowerClusterListMap &, const float, float &)
 {
@@ -45,7 +45,7 @@ float LocalAsymmetryFeatureTool::Run(const VertexSelectionBaseAlgorithm *const p
     localAsymmetry += this->GetLocalAsymmetryForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W), 
         slidingFitDataListMap.at(TPC_VIEW_W));
 
-    return localAsymmetry;
+    featureVector.push_back(localAsymmetry);
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------

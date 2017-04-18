@@ -20,6 +20,12 @@
 
 #include "larpandoracontent/LArVertex/SVMVertexSelectionAlgorithm.h"
 
+
+
+
+#include "larpandoracontent/LArHelpers/LArMCParticleHelper.h" 
+#include "larpandoracontent/LArObjects/LArMCParticle.h"
+
 #include <chrono>
 
 #define COUT(a) std::cout << "\033[1;32m" << a << "\033[0m" << std::endl; // ATTN temporary
@@ -97,8 +103,40 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
     
     const bool allowedToClassify(!m_trainingSetMode || m_allowClassifyDuringTraining);
     
+    //--------------------------------------------------------------------------------------------
+    
+    // Extract input collections
+    const MCParticleList *pMCParticleList = nullptr;
+    PandoraContentApi::GetList(*this, m_mcParticleListName, pMCParticleList);
+    
+    const CaloHitList *pCaloHitList = nullptr;
+    PandoraContentApi::GetList(*this, m_caloHitListName, pCaloHitList);
+    
+    // Obtain vector: true neutrinos
+    MCParticleVector mcNeutrinoVector;
+    this->SelectTrueNeutrinos(pMCParticleList, mcNeutrinoVector);
+    
+    // Obtain map: [mc particle -> primary mc particle]
+    LArMCParticleHelper::MCRelationMap mcToPrimaryMCMap;
+    LArMCParticleHelper::GetMCPrimaryMap(pMCParticleList, mcToPrimaryMCMap);
+    
+    // Remove non-reconstructable hits, e.g. those downstream of a neutron
+    CaloHitList selectedCaloHitList;
+    this->SelectCaloHits(pCaloHitList, mcToPrimaryMCMap, selectedCaloHitList);
+    
+    // Remove shared hits where target particle deposits below threshold energy fraction
+    CaloHitList goodCaloHitList;
+    this->SelectGoodCaloHits(&selectedCaloHitList, mcToPrimaryMCMap, goodCaloHitList);
+
+    // Obtain maps: [good hit -> primary mc particle], [primary mc particle -> list of good hits]
+    LArMonitoringHelper::CaloHitToMCMap goodHitToPrimaryMCMap;
+    LArMonitoringHelper::MCContributionMap mcToGoodTrueHitListMap;
+    LArMonitoringHelper::GetMCParticleToCaloHitMatches(&goodCaloHitList, mcToPrimaryMCMap, goodHitToPrimaryMCMap, mcToGoodTrueHitListMap);
+    
+    //--------------------------------------------------------------------------------------------
+    
     const Vertex *pCheatedVertex(NULL);
-    this->GetCheatedVertex(vertexVector, pCheatedVertex);
+    std::string interactionType = this->GetCheatedVertex(vertexVector, pCheatedVertex, mcToGoodTrueHitListMap);
     
     if (m_cheatTheVertex) // ATTN temporary
     {    
@@ -169,14 +207,17 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
                 
             if (m_trainingSetMode && pBestVertex && (topNVertices.size() == m_topNSize) && (bestVertexDr < m_minTopNSeparation))
             {
+                
+                
+                
                 if (m_produceAllTrainingPermutations)
                 {
                     for (const FloatVector &permutedFeatureList : this->GeneratePermutedFeatureLists(eventFeatureInfo, vertexFeatureInfoMap, pVertex, topNVertices))
-                        SVMHelper::ProduceTrainingExample(m_trainingOutputFile, (pVertex == pBestVertex), permutedFeatureList);
+                        SVMHelper::ProduceTrainingExample(m_trainingOutputFile + "_" + interactionType + ".txt", (pVertex == pBestVertex), permutedFeatureList);
                 }
                 
                 else
-                    SVMHelper::ProduceTrainingExample(m_trainingOutputFile, (pVertex == pBestVertex), featureList);
+                    SVMHelper::ProduceTrainingExample(m_trainingOutputFile + "_" + interactionType + ".txt", (pVertex == pBestVertex), featureList);
             }
         }
     }
@@ -480,20 +521,20 @@ void SVMVertexSelectionAlgorithm::PopulateVertexFeatureInfoMap(const BeamConstan
     
     const float beamDeweighting(this->GetBeamDeweightingScore(beamConstants, pVertex));
     
-    const float energyKick(SVMHelper::CalculateFeature<EnergyKickFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore));
+    const float energyKick(SVMHelper::CalculateFeaturesOfType<EnergyKickFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float localAsymmetry(SVMHelper::CalculateFeature<LocalAsymmetryFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore));
+    const float localAsymmetry(SVMHelper::CalculateFeaturesOfType<LocalAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float globalAsymmetry(SVMHelper::CalculateFeature<GlobalAsymmetryFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore));
+    const float globalAsymmetry(SVMHelper::CalculateFeaturesOfType<GlobalAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float showerAsymmetry(SVMHelper::CalculateFeature<ShowerAsymmetryFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore));
+    const float showerAsymmetry(SVMHelper::CalculateFeaturesOfType<ShowerAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float rPhiFeature(SVMHelper::CalculateFeature<RPhiFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore));
+    const float rPhiFeature(SVMHelper::CalculateFeaturesOfType<RPhiFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
     
     VertexFeatureInfo vertexFeatureInfo(beamDeweighting, rPhiFeature, energyKick, localAsymmetry, globalAsymmetry, showerAsymmetry);
     vertexFeatureInfoMap.emplace(pVertex, vertexFeatureInfo);
@@ -586,7 +627,8 @@ void SVMVertexSelectionAlgorithm::GetBestVertex(const VertexList &topNVertices, 
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-void SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &vertexVector, const Vertex *&pCheatedVertex) const // ATTN temporary
+std::string SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &vertexVector, const Vertex *&pCheatedVertex, 
+    const LArMonitoringHelper::MCContributionMap &mcToGoodTrueHitListMap) const // ATTN temporary
 {
     // Extract input collections
     const MCParticleList *pMCParticleList = nullptr;
@@ -595,6 +637,8 @@ void SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &vertexVec
     // Obtain vector: true neutrinos
     MCParticleVector mcNeutrinoVector;
     LArMCParticleHelper::GetTrueNeutrinos(pMCParticleList, mcNeutrinoVector);
+    
+    std::string interactionType("UNKNOWN");
     
     float bestVertexDr(std::numeric_limits<float>::max());
     for (const Vertex * const pVertex : vertexVector)
@@ -607,7 +651,15 @@ void SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &vertexVec
                 
             const float dr = (mcNeutrinoPosition - pVertex->GetPosition()).GetMagnitude();
             if (dr < mcVertexDr)
+            {
+                const LArMCParticle *const pLArMCNeutrino = dynamic_cast<const LArMCParticle*>(pMCNeutrino);
+
+                if (pLArMCNeutrino)
+                    interactionType = this->ToString(this->GetInteractionType(pLArMCNeutrino, pMCParticleList, mcToGoodTrueHitListMap));
+                    
                 mcVertexDr = dr;
+                
+            }
         }
 
         if (mcVertexDr < bestVertexDr)
@@ -616,6 +668,8 @@ void SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &vertexVec
             pCheatedVertex = pVertex;
         }
     }
+    
+    return interactionType;
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -780,7 +834,7 @@ StatusCode SVMVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xmlHandle
     PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ProcessAlgorithmToolList(*this, xmlHandle, "FeatureTools", algorithmToolVector));
     
     for (AlgorithmTool *const pAlgorithmTool : algorithmToolVector)
-        PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, SVMHelper::AddFeatureToolToMap(pAlgorithmTool, m_featureToolMap));
+        PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, SVMHelper::AddFeatureToolToVector(pAlgorithmTool, m_featureToolVector));
         
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "ClassifyUsingPermutations", m_classifyUsingPermutations));
@@ -874,8 +928,428 @@ StatusCode SVMVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xmlHandle
         
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle,
         "CheatTheVertex", m_cheatTheVertex)); // ATTN temporary
+        
+    PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ReadValue(xmlHandle, "CaloHitListName", m_caloHitListName));
 
     return VertexSelectionBaseAlgorithm::ReadSettings(xmlHandle);
+}
+
+
+
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+
+void SVMVertexSelectionAlgorithm::SelectCaloHits(const CaloHitList *const pCaloHitList, const LArMCParticleHelper::MCRelationMap &mcToPrimaryMCMap,
+    CaloHitList &selectedCaloHitList) const
+{
+    for (const CaloHit *const pCaloHit : *pCaloHitList)
+    {
+        try
+        {
+            const MCParticle *const pHitParticle(MCParticleHelper::GetMainMCParticle(pCaloHit));
+
+            LArMCParticleHelper::MCRelationMap::const_iterator mcIter = mcToPrimaryMCMap.find(pHitParticle);
+
+            if (mcToPrimaryMCMap.end() == mcIter)
+                continue;
+
+            const MCParticle *const pPrimaryParticle = mcIter->second;
+
+            if (this->PassMCParticleChecks(pPrimaryParticle, pPrimaryParticle, pHitParticle))
+                selectedCaloHitList.push_back(pCaloHit);
+        }
+        catch (const StatusCodeException &)
+        {
+        }
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+bool SVMVertexSelectionAlgorithm::PassMCParticleChecks(const MCParticle *const pOriginalPrimary, const MCParticle *const pThisMCParticle,
+    const MCParticle *const pHitMCParticle) const
+{
+    if (NEUTRON == std::abs(pThisMCParticle->GetParticleId()))
+        return false;
+
+    if ((PHOTON == pThisMCParticle->GetParticleId()) && (PHOTON != pOriginalPrimary->GetParticleId()) && (E_MINUS != std::abs(pOriginalPrimary->GetParticleId())))
+    {
+        if ((pThisMCParticle->GetEndpoint() - pThisMCParticle->GetVertex()).GetMagnitude() > 2.5f)
+            return false;
+    }
+
+    if (pThisMCParticle == pHitMCParticle)
+        return true;
+
+    for (const MCParticle *const pDaughterMCParticle : pThisMCParticle->GetDaughterList())
+    {
+        if (this->PassMCParticleChecks(pOriginalPrimary, pDaughterMCParticle, pHitMCParticle))
+            return true;
+    }
+
+    return false;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void SVMVertexSelectionAlgorithm::SelectGoodCaloHits(const CaloHitList *const pSelectedCaloHitList, const LArMCParticleHelper::MCRelationMap &mcToPrimaryMCMap,
+    CaloHitList &selectedGoodCaloHitList) const
+{
+    for (const CaloHit *const pCaloHit : *pSelectedCaloHitList)
+    {
+        MCParticleVector mcParticleVector;
+        for (const auto &mapEntry : pCaloHit->GetMCParticleWeightMap()) mcParticleVector.push_back(mapEntry.first);
+        std::sort(mcParticleVector.begin(), mcParticleVector.end(), PointerLessThan<MCParticle>());
+
+        MCParticleWeightMap primaryWeightMap;
+
+        for (const MCParticle *const pMCParticle : mcParticleVector)
+        {
+            const float weight(pCaloHit->GetMCParticleWeightMap().at(pMCParticle));
+            LArMCParticleHelper::MCRelationMap::const_iterator mcIter = mcToPrimaryMCMap.find(pMCParticle);
+
+            if (mcToPrimaryMCMap.end() != mcIter)
+                primaryWeightMap[mcIter->second] += weight;
+        }
+
+        MCParticleVector mcPrimaryVector;
+        for (const auto &mapEntry : primaryWeightMap) mcPrimaryVector.push_back(mapEntry.first);
+        std::sort(mcPrimaryVector.begin(), mcPrimaryVector.end(), PointerLessThan<MCParticle>());
+
+        const MCParticle *pBestPrimaryParticle(nullptr);
+        float bestPrimaryWeight(0.f), primaryWeightSum(0.f);
+
+        for (const MCParticle *const pPrimaryMCParticle : mcPrimaryVector)
+        {
+            const float primaryWeight(primaryWeightMap.at(pPrimaryMCParticle));
+            primaryWeightSum += primaryWeight;
+
+            if (primaryWeight > bestPrimaryWeight)
+            {
+                bestPrimaryWeight = primaryWeight;
+                pBestPrimaryParticle = pPrimaryMCParticle;
+            }
+        }
+
+        if (!pBestPrimaryParticle || (primaryWeightSum < std::numeric_limits<float>::epsilon()) || ((bestPrimaryWeight / primaryWeightSum) < 0.9f))
+            continue;
+
+        selectedGoodCaloHitList.push_back(pCaloHit);
+    }
+}
+
+SVMVertexSelectionAlgorithm::InteractionType SVMVertexSelectionAlgorithm::GetInteractionType(const LArMCParticle *const pLArMCNeutrino, const MCParticleList *pMCParticleList, const LArMonitoringHelper::MCContributionMap &mcToGoodTrueHitListMap) const
+{
+    // Obtain vector: primary mc particles
+    MCParticleVector mcPrimaryVector;
+    LArMCParticleHelper::GetPrimaryMCParticleList(pMCParticleList, mcPrimaryVector);
+    
+    unsigned int nNonNeutrons(0), nMuons(0), nElectrons(0), nProtons(0), nPiPlus(0), nPiMinus(0), nNeutrons(0), nPhotons(0);
+    
+    for (const auto pMCPrimary : mcPrimaryVector)
+    {
+        LArMonitoringHelper::MCContributionMap::const_iterator goodTrueHitsIter = mcToGoodTrueHitListMap.find(pMCPrimary);
+
+        if (mcToGoodTrueHitListMap.end() != goodTrueHitsIter)
+        {
+            const CaloHitList &caloHitList(goodTrueHitsIter->second);
+            if (caloHitList.size() < 15)
+                continue;
+                
+            int nGoodViews(0);
+            if (LArMonitoringHelper::CountHitsByType(TPC_VIEW_U, caloHitList) >= 5)
+                ++nGoodViews;
+            
+            if (LArMonitoringHelper::CountHitsByType(TPC_VIEW_V, caloHitList) >= 5)
+                ++nGoodViews; 
+                
+            if (LArMonitoringHelper::CountHitsByType(TPC_VIEW_W, caloHitList) >= 5)
+                ++nGoodViews;
+                
+            if (nGoodViews < 2)
+                continue;
+                
+        }
+        
+        //if (!this->IsGoodMCPrimary(pMCPrimary))
+        //    continue;
+        
+        if (2112 != pMCPrimary->GetParticleId()) ++nNonNeutrons;
+
+        if (13 == pMCPrimary->GetParticleId()) ++nMuons;
+        if (11 == pMCPrimary->GetParticleId()) ++nElectrons;
+        else if (2212 == pMCPrimary->GetParticleId()) ++nProtons;
+        else if (22 == pMCPrimary->GetParticleId()) ++nPhotons;
+        else if (211 == pMCPrimary->GetParticleId()) ++nPiPlus;
+        else if (-211 == pMCPrimary->GetParticleId()) ++nPiMinus;
+        else if (2112 == pMCPrimary->GetParticleId()) ++nNeutrons;
+    }
+
+    if (1098 == pLArMCNeutrino->GetNuanceCode()) return NU_E_SCATTERING;
+
+    if (1001 == pLArMCNeutrino->GetNuanceCode())
+    {
+        if ((1 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons)) return CCQEL_MU;
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons)) return CCQEL_MU_P;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons)) return CCQEL_MU_P_P;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons)) return CCQEL_MU_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons)) return CCQEL_MU_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons)) return CCQEL_MU_P_P_P_P_P;
+
+        if ((1 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons)) return CCQEL_E;
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons)) return CCQEL_E_P;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons)) return CCQEL_E_P_P;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons)) return CCQEL_E_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons)) return CCQEL_E_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons)) return CCQEL_E_P_P_P_P_P;
+    }
+
+    if (1002 == pLArMCNeutrino->GetNuanceCode())
+    {
+        if ((1 == nNonNeutrons) && (1 == nProtons)) return NCQEL_P;
+        if ((2 == nNonNeutrons) && (2 == nProtons)) return NCQEL_P_P;
+        if ((3 == nNonNeutrons) && (3 == nProtons)) return NCQEL_P_P_P;
+        if ((4 == nNonNeutrons) && (4 == nProtons)) return NCQEL_P_P_P_P;
+        if ((5 == nNonNeutrons) && (5 == nProtons)) return NCQEL_P_P_P_P_P;
+    }
+
+    if ((pLArMCNeutrino->GetNuanceCode() >= 1003) && (pLArMCNeutrino->GetNuanceCode() <= 1005))
+    {
+        if ((1 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons)) return CCRES_MU;
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons)) return CCRES_MU_P;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons)) return CCRES_MU_P_P;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons)) return CCRES_MU_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons)) return CCRES_MU_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons)) return CCRES_MU_P_P_P_P_P;
+
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons) && (1 == nPiPlus)) return CCRES_MU_PIPLUS;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_PIPLUS;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_PIPLUS;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_P_PIPLUS;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_P_P_PIPLUS;
+        if ((7 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons) && (1 == nPiPlus)) return CCRES_MU_P_P_P_P_P_PIPLUS;
+
+        if ((2 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons) && (1 == nPhotons)) return CCRES_MU_PHOTON;
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_PHOTON;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_PHOTON;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_P_PHOTON;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_P_P_PHOTON;
+        if ((7 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons) && (1 == nPhotons)) return CCRES_MU_P_P_P_P_P_PHOTON;
+
+        if ((3 == nNonNeutrons) && (1 == nMuons) && (0 == nProtons) && (2 == nPhotons)) return CCRES_MU_PIZERO;
+        if ((4 == nNonNeutrons) && (1 == nMuons) && (1 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_PIZERO;
+        if ((5 == nNonNeutrons) && (1 == nMuons) && (2 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_PIZERO;
+        if ((6 == nNonNeutrons) && (1 == nMuons) && (3 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_P_PIZERO;
+        if ((7 == nNonNeutrons) && (1 == nMuons) && (4 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_P_P_PIZERO;
+        if ((8 == nNonNeutrons) && (1 == nMuons) && (5 == nProtons) && (2 == nPhotons)) return CCRES_MU_P_P_P_P_P_PIZERO;
+
+        if ((1 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons)) return CCRES_E;
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons)) return CCRES_E_P;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons)) return CCRES_E_P_P;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons)) return CCRES_E_P_P_P;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons)) return CCRES_E_P_P_P_P;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons)) return CCRES_E_P_P_P_P_P;
+
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons) && (1 == nPiPlus)) return CCRES_E_PIPLUS;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_PIPLUS;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_PIPLUS;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_P_PIPLUS;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_P_P_PIPLUS;
+        if ((7 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons) && (1 == nPiPlus)) return CCRES_E_P_P_P_P_P_PIPLUS;
+
+        if ((2 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons) && (1 == nPhotons)) return CCRES_E_PHOTON;
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons) && (1 == nPhotons)) return CCRES_E_P_PHOTON;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_PHOTON;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_P_PHOTON;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_P_P_PHOTON;
+        if ((7 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons) && (1 == nPhotons)) return CCRES_E_P_P_P_P_P_PHOTON;
+
+        if ((3 == nNonNeutrons) && (1 == nElectrons) && (0 == nProtons) && (2 == nPhotons)) return CCRES_E_PIZERO;
+        if ((4 == nNonNeutrons) && (1 == nElectrons) && (1 == nProtons) && (2 == nPhotons)) return CCRES_E_P_PIZERO;
+        if ((5 == nNonNeutrons) && (1 == nElectrons) && (2 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_PIZERO;
+        if ((6 == nNonNeutrons) && (1 == nElectrons) && (3 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_P_PIZERO;
+        if ((7 == nNonNeutrons) && (1 == nElectrons) && (4 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_P_P_PIZERO;
+        if ((8 == nNonNeutrons) && (1 == nElectrons) && (5 == nProtons) && (2 == nPhotons)) return CCRES_E_P_P_P_P_P_PIZERO;
+    }
+
+    if ((pLArMCNeutrino->GetNuanceCode() >= 1006) && (pLArMCNeutrino->GetNuanceCode() <= 1009))
+    {
+        if ((1 == nNonNeutrons) && (1 == nProtons)) return NCRES_P;
+        if ((2 == nNonNeutrons) && (2 == nProtons)) return NCRES_P_P;
+        if ((3 == nNonNeutrons) && (3 == nProtons)) return NCRES_P_P_P;
+        if ((4 == nNonNeutrons) && (4 == nProtons)) return NCRES_P_P_P_P;
+        if ((5 == nNonNeutrons) && (5 == nProtons)) return NCRES_P_P_P_P_P;
+
+        if ((1 == nNonNeutrons) && (0 == nProtons) && (1 == nPiPlus)) return NCRES_PIPLUS;
+        if ((2 == nNonNeutrons) && (1 == nProtons) && (1 == nPiPlus)) return NCRES_P_PIPLUS;
+        if ((3 == nNonNeutrons) && (2 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_PIPLUS;
+        if ((4 == nNonNeutrons) && (3 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_P_PIPLUS;
+        if ((5 == nNonNeutrons) && (4 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_P_P_PIPLUS;
+        if ((6 == nNonNeutrons) && (5 == nProtons) && (1 == nPiPlus)) return NCRES_P_P_P_P_P_PIPLUS;
+
+        if ((1 == nNonNeutrons) && (0 == nProtons) && (1 == nPiMinus)) return NCRES_PIMINUS;
+        if ((2 == nNonNeutrons) && (1 == nProtons) && (1 == nPiMinus)) return NCRES_P_PIMINUS;
+        if ((3 == nNonNeutrons) && (2 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_PIMINUS;
+        if ((4 == nNonNeutrons) && (3 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_P_PIMINUS;
+        if ((5 == nNonNeutrons) && (4 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_P_P_PIMINUS;
+        if ((6 == nNonNeutrons) && (5 == nProtons) && (1 == nPiMinus)) return NCRES_P_P_P_P_P_PIMINUS;
+
+        if ((1 == nNonNeutrons) && (0 == nProtons) && (1 == nPhotons)) return NCRES_PHOTON;
+        if ((2 == nNonNeutrons) && (1 == nProtons) && (1 == nPhotons)) return NCRES_P_PHOTON;
+        if ((3 == nNonNeutrons) && (2 == nProtons) && (1 == nPhotons)) return NCRES_P_P_PHOTON;
+        if ((4 == nNonNeutrons) && (3 == nProtons) && (1 == nPhotons)) return NCRES_P_P_P_PHOTON;
+        if ((5 == nNonNeutrons) && (4 == nProtons) && (1 == nPhotons)) return NCRES_P_P_P_P_PHOTON;
+        if ((6 == nNonNeutrons) && (5 == nProtons) && (1 == nPhotons)) return NCRES_P_P_P_P_P_PHOTON;
+
+        if ((2 == nNonNeutrons) && (0 == nProtons) && (2 == nPhotons)) return NCRES_PIZERO;
+        if ((3 == nNonNeutrons) && (1 == nProtons) && (2 == nPhotons)) return NCRES_P_PIZERO;
+        if ((4 == nNonNeutrons) && (2 == nProtons) && (2 == nPhotons)) return NCRES_P_P_PIZERO;
+        if ((5 == nNonNeutrons) && (3 == nProtons) && (2 == nPhotons)) return NCRES_P_P_P_PIZERO;
+        if ((6 == nNonNeutrons) && (4 == nProtons) && (2 == nPhotons)) return NCRES_P_P_P_P_PIZERO;
+        if ((7 == nNonNeutrons) && (5 == nProtons) && (2 == nPhotons)) return NCRES_P_P_P_P_P_PIZERO;
+    }
+
+    if (pLArMCNeutrino->GetNuanceCode() == 1091) return CCDIS;
+    if (pLArMCNeutrino->GetNuanceCode() == 1092) return NCDIS;
+    if (pLArMCNeutrino->GetNuanceCode() == 1096) return NCCOH;
+    if (pLArMCNeutrino->GetNuanceCode() == 1097) return CCCOH;
+
+    return OTHER_INTERACTION;
+}
+
+/**
+ *  @brief  Get string representing interaction type
+ * 
+ *  @param  interactionType
+ * 
+ *  @return the interaction type string
+ */
+std::string SVMVertexSelectionAlgorithm::ToString(const InteractionType interactionType) const
+{
+    switch (interactionType)
+    {
+    case CCQEL_MU: return "CCQEL_MU";
+    case CCQEL_MU_P: return "CCQEL_MU_P";
+    case CCQEL_MU_P_P: return "CCQEL_MU_P_P";
+    case CCQEL_MU_P_P_P: return "CCQEL_MU_P_P_P";
+    case CCQEL_MU_P_P_P_P: return "CCQEL_MU_P_P_P_P";
+    case CCQEL_MU_P_P_P_P_P: return "CCQEL_MU_P_P_P_P_P";
+    case CCQEL_E: return "CCQEL_E";
+    case CCQEL_E_P: return "CCQEL_E_P";
+    case CCQEL_E_P_P: return "CCQEL_E_P_P";
+    case CCQEL_E_P_P_P: return "CCQEL_E_P_P_P";
+    case CCQEL_E_P_P_P_P: return "CCQEL_E_P_P_P_P";
+    case CCQEL_E_P_P_P_P_P: return "CCQEL_E_P_P_P_P_P";
+    case NCQEL_P: return "NCQEL_P";
+    case NCQEL_P_P: return "NCQEL_P_P";
+    case NCQEL_P_P_P: return "NCQEL_P_P_P";
+    case NCQEL_P_P_P_P: return "NCQEL_P_P_P_P";
+    case NCQEL_P_P_P_P_P: return "NCQEL_P_P_P_P_P";
+    case CCRES_MU: return "CCRES_MU";
+    case CCRES_MU_P: return "CCRES_MU_P";
+    case CCRES_MU_P_P: return "CCRES_MU_P_P";
+    case CCRES_MU_P_P_P: return "CCRES_MU_P_P_P";
+    case CCRES_MU_P_P_P_P: return "CCRES_MU_P_P_P_P";
+    case CCRES_MU_P_P_P_P_P: return "CCRES_MU_P_P_P_P_P";
+    case CCRES_MU_PIPLUS: return "CCRES_MU_PIPLUS";
+    case CCRES_MU_P_PIPLUS: return "CCRES_MU_P_PIPLUS";
+    case CCRES_MU_P_P_PIPLUS: return "CCRES_MU_P_P_PIPLUS";
+    case CCRES_MU_P_P_P_PIPLUS: return "CCRES_MU_P_P_P_PIPLUS";
+    case CCRES_MU_P_P_P_P_PIPLUS: return "CCRES_MU_P_P_P_P_PIPLUS";
+    case CCRES_MU_P_P_P_P_P_PIPLUS: return "CCRES_MU_P_P_P_P_P_PIPLUS";
+    case CCRES_MU_PHOTON: return "CCRES_MU_PHOTON";
+    case CCRES_MU_P_PHOTON: return "CCRES_MU_P_PHOTON";
+    case CCRES_MU_P_P_PHOTON: return "CCRES_MU_P_P_PHOTON";
+    case CCRES_MU_P_P_P_PHOTON: return "CCRES_MU_P_P_P_PHOTON";
+    case CCRES_MU_P_P_P_P_PHOTON: return "CCRES_MU_P_P_P_P_PHOTON";
+    case CCRES_MU_P_P_P_P_P_PHOTON: return "CCRES_MU_P_P_P_P_P_PHOTON";
+    case CCRES_MU_PIZERO: return "CCRES_MU_PIZERO";
+    case CCRES_MU_P_PIZERO: return "CCRES_MU_P_PIZERO";
+    case CCRES_MU_P_P_PIZERO: return "CCRES_MU_P_P_PIZERO";
+    case CCRES_MU_P_P_P_PIZERO: return "CCRES_MU_P_P_P_PIZERO";
+    case CCRES_MU_P_P_P_P_PIZERO: return "CCRES_MU_P_P_P_P_PIZERO";
+    case CCRES_MU_P_P_P_P_P_PIZERO: return "CCRES_MU_P_P_P_P_P_PIZERO";
+    case CCRES_E: return "CCRES_E";
+    case CCRES_E_P: return "CCRES_E_P";
+    case CCRES_E_P_P: return "CCRES_E_P_P";
+    case CCRES_E_P_P_P: return "CCRES_E_P_P_P";
+    case CCRES_E_P_P_P_P: return "CCRES_E_P_P_P_P";
+    case CCRES_E_P_P_P_P_P: return "CCRES_E_P_P_P_P_P";
+    case CCRES_E_PIPLUS: return "CCRES_E_PIPLUS";
+    case CCRES_E_P_PIPLUS: return "CCRES_E_P_PIPLUS";
+    case CCRES_E_P_P_PIPLUS: return "CCRES_E_P_P_PIPLUS";
+    case CCRES_E_P_P_P_PIPLUS: return "CCRES_E_P_P_P_PIPLUS";
+    case CCRES_E_P_P_P_P_PIPLUS: return "CCRES_E_P_P_P_P_PIPLUS";
+    case CCRES_E_P_P_P_P_P_PIPLUS: return "CCRES_E_P_P_P_P_P_PIPLUS";
+    case CCRES_E_PHOTON: return "CCRES_E_PHOTON";
+    case CCRES_E_P_PHOTON: return "CCRES_E_P_PHOTON";
+    case CCRES_E_P_P_PHOTON: return "CCRES_E_P_P_PHOTON";
+    case CCRES_E_P_P_P_PHOTON: return "CCRES_E_P_P_P_PHOTON";
+    case CCRES_E_P_P_P_P_PHOTON: return "CCRES_E_P_P_P_P_PHOTON";
+    case CCRES_E_P_P_P_P_P_PHOTON: return "CCRES_E_P_P_P_P_P_PHOTON";
+    case CCRES_E_PIZERO: return "CCRES_E_PIZERO";
+    case CCRES_E_P_PIZERO: return "CCRES_E_P_PIZERO";
+    case CCRES_E_P_P_PIZERO: return "CCRES_E_P_P_PIZERO";
+    case CCRES_E_P_P_P_PIZERO: return "CCRES_E_P_P_P_PIZERO";
+    case CCRES_E_P_P_P_P_PIZERO: return "CCRES_E_P_P_P_P_PIZERO";
+    case CCRES_E_P_P_P_P_P_PIZERO: return "CCRES_E_P_P_P_P_P_PIZERO";
+    case NCRES_P: return "NCRES_P";
+    case NCRES_P_P: return "NCRES_P_P";
+    case NCRES_P_P_P: return "NCRES_P_P_P";
+    case NCRES_P_P_P_P: return "NCRES_P_P_P_P";
+    case NCRES_P_P_P_P_P: return "NCRES_P_P_P_P_P";
+    case NCRES_PIPLUS: return "NCRES_PIPLUS";
+    case NCRES_P_PIPLUS: return "NCRES_P_PIPLUS";
+    case NCRES_P_P_PIPLUS: return "NCRES_P_P_PIPLUS";
+    case NCRES_P_P_P_PIPLUS: return "NCRES_P_P_P_PIPLUS";
+    case NCRES_P_P_P_P_PIPLUS: return "NCRES_P_P_P_P_PIPLUS";
+    case NCRES_P_P_P_P_P_PIPLUS: return "NCRES_P_P_P_P_P_PIPLUS";
+    case NCRES_PIMINUS: return "NCRES_PIMINUS";
+    case NCRES_P_PIMINUS: return "NCRES_P_PIMINUS";
+    case NCRES_P_P_PIMINUS: return "NCRES_P_P_PIMINUS";
+    case NCRES_P_P_P_PIMINUS: return "NCRES_P_P_P_PIMINUS";
+    case NCRES_P_P_P_P_PIMINUS: return "NCRES_P_P_P_P_PIMINUS";
+    case NCRES_P_P_P_P_P_PIMINUS: return "NCRES_P_P_P_P_P_PIMINUS";
+    case NCRES_PHOTON: return "NCRES_PHOTON";
+    case NCRES_P_PHOTON: return "NCRES_P_PHOTON";
+    case NCRES_P_P_PHOTON: return "NCRES_P_P_PHOTON";
+    case NCRES_P_P_P_PHOTON: return "NCRES_P_P_P_PHOTON";
+    case NCRES_P_P_P_P_PHOTON: return "NCRES_P_P_P_P_PHOTON";
+    case NCRES_P_P_P_P_P_PHOTON: return "NCRES_P_P_P_P_P_PHOTON";
+    case NCRES_PIZERO: return "NCRES_PIZERO";
+    case NCRES_P_PIZERO: return "NCRES_P_PIZERO";
+    case NCRES_P_P_PIZERO: return "NCRES_P_P_PIZERO";
+    case NCRES_P_P_P_PIZERO: return "NCRES_P_P_P_PIZERO";
+    case NCRES_P_P_P_P_PIZERO: return "NCRES_P_P_P_P_PIZERO";
+    case NCRES_P_P_P_P_P_PIZERO: return "NCRES_P_P_P_P_P_PIZERO";
+    case CCDIS: return "CCDIS";
+    case NCDIS: return "NCDIS";
+    case CCCOH: return "CCCOH";
+    case NCCOH: return "NCCOH";
+    case OTHER_INTERACTION: return "OTHER_INTERACTION";
+    case ALL_INTERACTIONS: return "ALL_INTERACTIONS";
+    case NU_E_SCATTERING: return "NU_E_SCATTERING";
+    default: return "UNKNOWN";
+    }
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void SVMVertexSelectionAlgorithm::SelectTrueNeutrinos(const MCParticleList *const pAllMCParticleList, MCParticleVector &selectedMCNeutrinoVector) const
+{
+    MCParticleVector allMCNeutrinoVector;
+    LArMCParticleHelper::GetNeutrinoMCParticleList(pAllMCParticleList, allMCNeutrinoVector);
+
+    for (const MCParticle *const pMCNeutrino : allMCNeutrinoVector)
+    {
+        // ATTN Now demand that input mc neutrinos LArMCParticles, with addition of interaction type
+        const LArMCParticle *const pLArMCNeutrino(dynamic_cast<const LArMCParticle*>(pMCNeutrino));
+
+        if (pLArMCNeutrino && (0 != pLArMCNeutrino->GetNuanceCode()))
+            selectedMCNeutrinoVector.push_back(pMCNeutrino);
+    }
 }
                                                             
 } // namespace lar_content

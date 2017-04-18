@@ -18,7 +18,7 @@ namespace lar_content
 /**
  *  @brief  ShowerAsymmetryFeatureTool class
  */
-class ShowerAsymmetryFeatureTool : public VertexSelectionBaseAlgorithm::VertexFeatureTool<float>
+class ShowerAsymmetryFeatureTool : public VertexSelectionBaseAlgorithm::VertexFeatureTool
 {
 public:
     /**
@@ -46,7 +46,7 @@ public:
      * 
      *  @return the shower asymmetry feature
      */
-    float Run(const VertexSelectionBaseAlgorithm * const pAlgorithm, const pandora::Vertex * const pVertex, 
+    void Run(DoubleVector &featureVector, const VertexSelectionBaseAlgorithm * const pAlgorithm, const pandora::Vertex * const pVertex, 
         const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &, const VertexSelectionBaseAlgorithm::ClusterListMap &, 
         const VertexSelectionBaseAlgorithm::KDTreeMap &, const VertexSelectionBaseAlgorithm::ShowerClusterListMap &showerClusterListMap,
         const float, float &);

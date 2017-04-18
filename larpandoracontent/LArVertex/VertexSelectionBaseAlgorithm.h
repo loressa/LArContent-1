@@ -362,11 +362,8 @@ public:
     typedef std::map<pandora::HitType, const ShowerClusterList>                   ShowerClusterListMap;  ///< Map of shower cluster lists for passing to tools
     typedef std::map<pandora::HitType, const std::reference_wrapper<HitKDTree2D>> KDTreeMap;             ///< Map array of hit kd trees for passing to tools
     
-    typedef SVMFeatureToolBase<VertexSelectionBaseAlgorithm, const pandora::Vertex * const, const SlidingFitDataListMap &, 
-        const ClusterListMap &, const KDTreeMap &, const ShowerClusterListMap &, const float, float &>  VertexFeatureToolBase; ///< The base type for the vertex feature tools
-              
-    template <typename T>
-    using VertexFeatureTool = VertexFeatureToolBase::FeatureTool<T>; ///< Alias template for a vertex feature tool
+    typedef SVMFeatureTool<const VertexSelectionBaseAlgorithm *const, const pandora::Vertex * const, const SlidingFitDataListMap &, 
+        const ClusterListMap &, const KDTreeMap &, const ShowerClusterListMap &, const float, float &>  VertexFeatureTool; ///< The base type for the vertex feature tools
 
 private:
     pandora::StringVector   m_inputCaloHitListNames;        ///< The list of calo hit list names

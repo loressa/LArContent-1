@@ -49,17 +49,19 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
     for (const Vertex *const pVertex : vertexVector)
     {
         const float beamDeweightingScore(this->IsBeamModeOn() ? this->GetBeamDeweightingScore(beamConstants, pVertex) : 0.f);
-
-        const float energyKick(SVMHelper::CalculateFeature<EnergyKickFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-            ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
+        (void) beamDeweightingScore;
+        (void) bestFastScore;
+        (void)vertexScoreList;
+        //const float energyKick(SVMHelper::CalculateFeature<EnergyKickFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
+        //    ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
             
-        const float energyAsymmetry(SVMHelper::CalculateFeature<LocalAsymmetryFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-            ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
+        //const float energyAsymmetry(SVMHelper::CalculateFeature<LocalAsymmetryFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
+        //    ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
         
-        const float energyKickScore(-energyKick / m_epsilon);
-        const float energyAsymmetryScore(energyAsymmetry / m_asymmetryConstant);
+       // const float energyKickScore(-energyKick / m_epsilon);
+       // const float energyAsymmetryScore(energyAsymmetry / m_asymmetryConstant);
         
-        vertexScoreList.push_back(VertexScore(pVertex, beamDeweightingScore + energyKickScore + energyAsymmetryScore));
+        //vertexScoreList.push_back(VertexScore(pVertex, beamDeweightingScore + energyKickScore + energyAsymmetryScore));
     }
 }
 
@@ -72,7 +74,7 @@ StatusCode EnergyKickVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xm
     PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ProcessAlgorithmToolList(*this, xmlHandle, "FeatureTools", algorithmToolVector));
     
     for (AlgorithmTool *const pAlgorithmTool : algorithmToolVector)
-        PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, SVMHelper::AddFeatureToolToMap(pAlgorithmTool, m_featureToolMap));
+        PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, SVMHelper::AddFeatureToolToVector(pAlgorithmTool, m_featureToolVector));
     
     PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ReadVectorOfValues(xmlHandle,
         "InputClusterListNames", m_inputClusterListNames));

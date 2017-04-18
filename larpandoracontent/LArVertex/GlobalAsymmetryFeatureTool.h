@@ -16,7 +16,7 @@ namespace lar_content
 /**
  *  @brief  GlobalAsymmetryFeatureTool class
  */
-class GlobalAsymmetryFeatureTool : public VertexSelectionBaseAlgorithm::VertexFeatureTool<float>
+class GlobalAsymmetryFeatureTool : public VertexSelectionBaseAlgorithm::VertexFeatureTool
 {
 public:
     /**
@@ -44,7 +44,7 @@ public:
      * 
      *  @return the global asymmetry feature
      */
-    float Run(const VertexSelectionBaseAlgorithm * const pAlgorithm, const pandora::Vertex * const pVertex, 
+    void Run(SupportVectorMachine::DoubleVector &featureVector, const VertexSelectionBaseAlgorithm * const pAlgorithm, const pandora::Vertex * const pVertex, 
         const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &slidingFitDataListMap, const VertexSelectionBaseAlgorithm::ClusterListMap &, 
         const VertexSelectionBaseAlgorithm::KDTreeMap &, const VertexSelectionBaseAlgorithm::ShowerClusterListMap &, const float, float &);
 

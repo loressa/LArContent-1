@@ -17,6 +17,11 @@
 
 #include "larpandoracontent/LArVertex/VertexSelectionBaseAlgorithm.h"
 
+
+#include "larpandoracontent/LArObjects/LArMCParticle.h"
+#include "larpandoracontent/LArHelpers/LArMCParticleHelper.h"
+#include "larpandoracontent/LArHelpers/LArMonitoringHelper.h"
+
 namespace lar_content
 {    
 /**
@@ -237,7 +242,8 @@ private:
      */
     void GetBestVertex(const pandora::VertexList &topNVertices, const pandora::Vertex *&pBestVertex, float &bestVertexDr) const;
     
-    void GetCheatedVertex(const pandora::VertexVector &vertexVector, const pandora::Vertex *&pCheatedVertex) const; // ATTN temporary
+    std::string GetCheatedVertex(const pandora::VertexVector &vertexVector, const pandora::Vertex *&pCheatedVertex,
+        const LArMonitoringHelper::MCContributionMap &mcToGoodTrueHitListMap) const; // ATTN temporary
 
     /**
      *  @brief  Generate the feature list for a given vertex
@@ -292,8 +298,8 @@ private:
     void PopulateFinalVertexScoreList(const VertexFeatureInfoMap &vertexFeatureInfoMap, VertexScoreList &bestVertexScoreList,
         const pandora::VertexVector &vertexVector, VertexScoreList &finalVertexScoreList) const;
     
-    VertexFeatureToolBase::FeatureToolMap m_featureToolMap;   ///< The feature tool map
-    SupportVectorMachine<37>              m_svMachine;        ///< The support vector machine
+    VertexFeatureTool::FeatureToolVector m_featureToolVector; ///< The feature tool map
+    SupportVectorMachine                 m_svMachine;         ///< The support vector machine
                                                               
     std::string           m_trainingOutputFile;               ///< The training output file
     std::string           m_parameterInputFile;               ///< The parameter input file
@@ -328,6 +334,135 @@ private:
     bool m_drawThings;         ///< ATTN temporary
     bool m_cheatTrackShowerId; ///< ATTN temporary
     bool m_cheatTheVertex;     ///< ATTN temporary
+    
+    
+    
+   /**
+ *  @brief   InteractionType enum
+ */
+enum InteractionType
+{
+    // TODO Move to dynamic interaction type identification and labelling
+    CCQEL_MU,
+    CCQEL_MU_P,
+    CCQEL_MU_P_P,
+    CCQEL_MU_P_P_P,
+    CCQEL_MU_P_P_P_P,
+    CCQEL_MU_P_P_P_P_P,
+    CCQEL_E,
+    CCQEL_E_P,
+    CCQEL_E_P_P,
+    CCQEL_E_P_P_P,
+    CCQEL_E_P_P_P_P,
+    CCQEL_E_P_P_P_P_P,
+    NCQEL_P,
+    NCQEL_P_P,
+    NCQEL_P_P_P,
+    NCQEL_P_P_P_P,
+    NCQEL_P_P_P_P_P,
+    CCRES_MU,
+    CCRES_MU_P,
+    CCRES_MU_P_P,
+    CCRES_MU_P_P_P,
+    CCRES_MU_P_P_P_P,
+    CCRES_MU_P_P_P_P_P,
+    CCRES_MU_PIPLUS,
+    CCRES_MU_P_PIPLUS,
+    CCRES_MU_P_P_PIPLUS,
+    CCRES_MU_P_P_P_PIPLUS,
+    CCRES_MU_P_P_P_P_PIPLUS,
+    CCRES_MU_P_P_P_P_P_PIPLUS,
+    CCRES_MU_PHOTON,
+    CCRES_MU_P_PHOTON,
+    CCRES_MU_P_P_PHOTON,
+    CCRES_MU_P_P_P_PHOTON,
+    CCRES_MU_P_P_P_P_PHOTON,
+    CCRES_MU_P_P_P_P_P_PHOTON,
+    CCRES_MU_PIZERO,
+    CCRES_MU_P_PIZERO,
+    CCRES_MU_P_P_PIZERO,
+    CCRES_MU_P_P_P_PIZERO,
+    CCRES_MU_P_P_P_P_PIZERO,
+    CCRES_MU_P_P_P_P_P_PIZERO,
+    CCRES_E,
+    CCRES_E_P,
+    CCRES_E_P_P,
+    CCRES_E_P_P_P,
+    CCRES_E_P_P_P_P,
+    CCRES_E_P_P_P_P_P,
+    CCRES_E_PIPLUS,
+    CCRES_E_P_PIPLUS,
+    CCRES_E_P_P_PIPLUS,
+    CCRES_E_P_P_P_PIPLUS,
+    CCRES_E_P_P_P_P_PIPLUS,
+    CCRES_E_P_P_P_P_P_PIPLUS,
+    CCRES_E_PHOTON,
+    CCRES_E_P_PHOTON,
+    CCRES_E_P_P_PHOTON,
+    CCRES_E_P_P_P_PHOTON,
+    CCRES_E_P_P_P_P_PHOTON,
+    CCRES_E_P_P_P_P_P_PHOTON,
+    CCRES_E_PIZERO,
+    CCRES_E_P_PIZERO,
+    CCRES_E_P_P_PIZERO,
+    CCRES_E_P_P_P_PIZERO,
+    CCRES_E_P_P_P_P_PIZERO,
+    CCRES_E_P_P_P_P_P_PIZERO,
+    NCRES_P,
+    NCRES_P_P,
+    NCRES_P_P_P,
+    NCRES_P_P_P_P,
+    NCRES_P_P_P_P_P,
+    NCRES_PIPLUS,
+    NCRES_P_PIPLUS,
+    NCRES_P_P_PIPLUS,
+    NCRES_P_P_P_PIPLUS,
+    NCRES_P_P_P_P_PIPLUS,
+    NCRES_P_P_P_P_P_PIPLUS,
+    NCRES_PIMINUS,
+    NCRES_P_PIMINUS,
+    NCRES_P_P_PIMINUS,
+    NCRES_P_P_P_PIMINUS,
+    NCRES_P_P_P_P_PIMINUS,
+    NCRES_P_P_P_P_P_PIMINUS,
+    NCRES_PHOTON,
+    NCRES_P_PHOTON,
+    NCRES_P_P_PHOTON,
+    NCRES_P_P_P_PHOTON,
+    NCRES_P_P_P_P_PHOTON,
+    NCRES_P_P_P_P_P_PHOTON,
+    NCRES_PIZERO,
+    NCRES_P_PIZERO,
+    NCRES_P_P_PIZERO,
+    NCRES_P_P_P_PIZERO,
+    NCRES_P_P_P_P_PIZERO,
+    NCRES_P_P_P_P_P_PIZERO,
+    CCDIS,
+    NCDIS,
+    CCCOH,
+    NCCOH,
+    OTHER_INTERACTION,
+    NU_E_SCATTERING,
+    ALL_INTERACTIONS // ATTN use carefully!
+};
+    
+    std::string m_caloHitListName;
+    
+    void SelectTrueNeutrinos(const pandora::MCParticleList *const pAllMCParticleList, pandora::MCParticleVector &selectedMCNeutrinoVector) const;
+    std::string ToString(const InteractionType interactionType) const;
+    
+    
+    InteractionType GetInteractionType(const LArMCParticle *const pLArMCNeutrino, const pandora::MCParticleList *pMCParticleList, 
+        const LArMonitoringHelper::MCContributionMap &mcToGoodTrueHitListMap) const;
+
+    void SelectGoodCaloHits(const pandora::CaloHitList *const pSelectedCaloHitList, const LArMCParticleHelper::MCRelationMap &mcToPrimaryMCMap,
+        pandora::CaloHitList &selectedGoodCaloHitList) const;
+    
+    bool PassMCParticleChecks(const pandora::MCParticle *const pOriginalPrimary, const pandora::MCParticle *const pThisMCParticle,
+        const pandora::MCParticle *const pHitMCParticle) const;
+    
+    void SelectCaloHits(const pandora::CaloHitList *const pCaloHitList, const LArMCParticleHelper::MCRelationMap &mcToPrimaryMCMap,
+        pandora::CaloHitList &selectedCaloHitList) const;
 };
 
 //------------------------------------------------------------------------------------------------------------------------------------------

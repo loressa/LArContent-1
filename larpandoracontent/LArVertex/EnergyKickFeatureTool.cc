@@ -25,7 +25,7 @@ EnergyKickFeatureTool::EnergyKickFeatureTool() :
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-float EnergyKickFeatureTool::Run(const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, 
+void EnergyKickFeatureTool::Run(SupportVectorMachine::DoubleVector &featureVector, const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, 
     const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &slidingFitDataListMap, const VertexSelectionBaseAlgorithm::ClusterListMap &, 
     const VertexSelectionBaseAlgorithm::KDTreeMap &, const VertexSelectionBaseAlgorithm::ShowerClusterListMap &, const float, float &)
 {
@@ -43,7 +43,7 @@ float EnergyKickFeatureTool::Run(const VertexSelectionBaseAlgorithm *const pAlgo
     energyKick += this->GetEnergyKickForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W),
         slidingFitDataListMap.at(TPC_VIEW_W));
 
-    return energyKick;
+    featureVector.push_back(energyKick);
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------

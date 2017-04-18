@@ -23,7 +23,7 @@ GlobalAsymmetryFeatureTool::GlobalAsymmetryFeatureTool() :
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-float GlobalAsymmetryFeatureTool::Run(const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, 
+void GlobalAsymmetryFeatureTool::Run(SupportVectorMachine::DoubleVector &featureVector, const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, 
     const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &slidingFitDataListMap, const VertexSelectionBaseAlgorithm::ClusterListMap &, 
     const VertexSelectionBaseAlgorithm::KDTreeMap &, const VertexSelectionBaseAlgorithm::ShowerClusterListMap &, const float, float &)
 {
@@ -41,7 +41,7 @@ float GlobalAsymmetryFeatureTool::Run(const VertexSelectionBaseAlgorithm *const 
     globalAsymmetry += this->GetGlobalAsymmetryForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W), 
         slidingFitDataListMap.at(TPC_VIEW_W));
 
-    return globalAsymmetry;
+    featureVector.push_back(globalAsymmetry);
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------

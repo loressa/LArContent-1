@@ -23,7 +23,7 @@ ShowerAsymmetryFeatureTool::ShowerAsymmetryFeatureTool() :
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-float ShowerAsymmetryFeatureTool::Run(const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &,
+void ShowerAsymmetryFeatureTool::Run(DoubleVector &featureVector, const VertexSelectionBaseAlgorithm *const pAlgorithm, const Vertex * const pVertex, const VertexSelectionBaseAlgorithm::SlidingFitDataListMap &,
                 const VertexSelectionBaseAlgorithm::ClusterListMap &, const VertexSelectionBaseAlgorithm::KDTreeMap &, 
                 const VertexSelectionBaseAlgorithm::ShowerClusterListMap &showerClusterListMap, const float, float &)
 {
@@ -41,7 +41,7 @@ float ShowerAsymmetryFeatureTool::Run(const VertexSelectionBaseAlgorithm *const 
     showerAsymmetry += this->GetShowerAsymmetryForView(LArGeometryHelper::ProjectPosition(this->GetPandora(), pVertex->GetPosition(), TPC_VIEW_W),
         showerClusterListMap.at(TPC_VIEW_W));
     
-    return showerAsymmetry;
+    featureVector.push_back(showerAsymmetry);
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------

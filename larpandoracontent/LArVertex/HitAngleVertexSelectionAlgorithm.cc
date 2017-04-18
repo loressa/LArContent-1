@@ -34,11 +34,15 @@ void HitAngleVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &ve
     float bestFastScore(0.f);
     for (const Vertex *const pVertex : vertexVector)
     {
-        const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(this->GetBeamDeweightingScore(beamConstants, pVertex)) : 1.f);
-        const float rPhiScore(SVMHelper::CalculateFeature<RPhiFeatureTool>(m_featureToolMap, this, pVertex, SlidingFitDataListMap(), 
-            ClusterListMap(), kdTreeMap, ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
+        (void) pVertex;
+        (void) vertexScoreList;
+        (void) bestFastScore;
+        (void) beamConstants;
+        //const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(this->GetBeamDeweightingScore(beamConstants, pVertex)) : 1.f);
+        //const float rPhiScore(SVMHelper::CalculateFeature<RPhiFeatureTool>(m_featureToolMap, this, pVertex, SlidingFitDataListMap(), 
+        //    ClusterListMap(), kdTreeMap, ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
 
-        vertexScoreList.emplace_back(pVertex, beamDeweightingScore * rPhiScore);
+        //vertexScoreList.emplace_back(pVertex, beamDeweightingScore * rPhiScore);
     }
 }
 
@@ -51,7 +55,7 @@ StatusCode HitAngleVertexSelectionAlgorithm::ReadSettings(const TiXmlHandle xmlH
     PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, XmlHelper::ProcessAlgorithmToolList(*this, xmlHandle, "FeatureTools", algorithmToolVector));
     
     for (AlgorithmTool *const pAlgorithmTool : algorithmToolVector)
-        PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, SVMHelper::AddFeatureToolToMap(pAlgorithmTool, m_featureToolMap));
+        PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, SVMHelper::AddFeatureToolToVector(pAlgorithmTool, m_featureToolVector));
     
     return VertexSelectionBaseAlgorithm::ReadSettings(xmlHandle);
 }
