@@ -114,7 +114,7 @@ protected:
 private:
     typedef std::pair<pandora::CartesianVector, pandora::CartesianVector> ClusterEndPoints;
     typedef std::map<const pandora::Cluster *const, ClusterEndPoints> ClusterEndPointsMap;
-    typedef std::vector<pandora::FloatVector> FeatureListVector;
+    typedef std::vector<SupportVectorMachine::DoubleVector> FeatureListVector;
     typedef std::vector<pandora::VertexVector> VectorOfVertexVectors; 
     
     /**
@@ -255,7 +255,7 @@ private:
      * 
      *  @return the feature list
      */
-    pandora::FloatVector GenerateFeatureList(const EventFeatureInfo &eventFeatureInfo, const VertexFeatureInfoMap &vertexFeatureInfoMap,
+    SupportVectorMachine::DoubleVector GenerateFeatureList(const EventFeatureInfo &eventFeatureInfo, const VertexFeatureInfoMap &vertexFeatureInfoMap,
         const pandora::Vertex *const pVertex, const pandora::VertexList &topNVertices) const;
     
     /**
@@ -264,7 +264,7 @@ private:
      *  @param  eventFeatureInfo the event feature info
      *  @param  featureVector the vector of floats to append
      */
-    void AddEventFeaturesToVector(const EventFeatureInfo &eventFeatureInfo, pandora::FloatVector &featureVector) const;
+    void AddEventFeaturesToVector(const EventFeatureInfo &eventFeatureInfo, SupportVectorMachine::DoubleVector &featureVector) const;
     
     /**
      *  @brief  Add the vertex features to a vector in the correct order
@@ -272,7 +272,7 @@ private:
      *  @param  vertexFeatureInfo the vertex feature info
      *  @param  featureVector the vector of floats to append
      */
-    void AddVertexFeaturesToVector(const VertexFeatureInfo &vertexFeatureInfo, pandora::FloatVector &featureVector) const;
+    void AddVertexFeaturesToVector(const VertexFeatureInfo &vertexFeatureInfo, SupportVectorMachine::DoubleVector &featureVector) const;
     
     /**
      *  @brief  Generate all the permuted feature lists for a given vertex

@@ -175,11 +175,11 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
                 PandoraMonitoringApi::AddMarkerToVisualization(this->GetPandora(), &vertexPositionW, label, RED, 2);
             }
             
-            FloatVector featureList = this->GenerateFeatureList(eventFeatureInfo, vertexFeatureInfoMap, pVertex, topNVertices);
-            if (allowedToClassify && featureList.size() != m_svMachine.GetNumFeatures())
+            SupportVectorMachine::DoubleVector featureList = this->GenerateFeatureList(eventFeatureInfo, vertexFeatureInfoMap, pVertex, topNVertices);
+            if (allowedToClassify && featureList.size() != m_svMachine.GetNFeatures())
             {
                 std::cout << "SVMVertexSelectionAlgorithm: the number of features (" << featureList.size() << ") did not match the expected " << 
-                             "number of features (" << m_svMachine.GetNumFeatures() << ")" << std::endl;
+                             "number of features (" << m_svMachine.GetNFeatures() << ")" << std::endl;
                 throw pandora::StatusCodeException(pandora::STATUS_CODE_FAILURE);
             }
             
@@ -189,7 +189,7 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
                 if (true)
                 {
                     std::cout << "Features: ";
-                    for (const float feature : featureList)
+                    for (const double feature : featureList)
                         std::cout << feature << " ";
                         
                     std::cout << std::endl;
@@ -210,7 +210,7 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
                 
                 if (m_produceAllTrainingPermutations)
                 {
-                    for (const FloatVector &permutedFeatureList : this->GeneratePermutedFeatureLists(eventFeatureInfo, vertexFeatureInfoMap, pVertex, topNVertices))
+                    for (const SupportVectorMachine::DoubleVector &permutedFeatureList : this->GeneratePermutedFeatureLists(eventFeatureInfo, vertexFeatureInfoMap, pVertex, topNVertices))
                         SVMHelper::ProduceTrainingExample(m_trainingOutputFile + "_" + interactionType + ".txt", (pVertex == pBestVertex), permutedFeatureList);
                 }
                 
@@ -267,11 +267,11 @@ void SVMVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &vertexV
                     const Vertex *const pVertex(vertexSet.front());
                     const VertexList vertexList(vertexSet.begin(), vertexSet.end());
                     
-                    FloatVector featureList(this->GenerateFeatureList(eventFeatureInfo, vertexFeatureInfoMap, pVertex, vertexList));
-                    if (featureList.size() != m_svMachine.GetNumFeatures())
+                    SupportVectorMachine::DoubleVector featureList(this->GenerateFeatureList(eventFeatureInfo, vertexFeatureInfoMap, pVertex, vertexList));
+                    if (featureList.size() != m_svMachine.GetNFeatures())
                     {
                         std::cout << "SVMVertexSelectionAlgorithm: the number of features (" << featureList.size() << ") did not match the expected " << 
-                                     "number of features (" << m_svMachine.GetNumFeatures() << ")" << std::endl;
+                                     "number of features (" << m_svMachine.GetNFeatures() << ")" << std::endl;
                         throw pandora::StatusCodeException(pandora::STATUS_CODE_FAILURE);
                     }
                     
@@ -517,21 +517,24 @@ void SVMVertexSelectionAlgorithm::PopulateVertexFeatureInfoMap(const BeamConstan
 {
     float bestFastScore(0.f); // not actually used - artefact of toolizing RPhi score and still using performance trick
     
-    const float beamDeweighting(this->GetBeamDeweightingScore(beamConstants, pVertex));
+    const double beamDeweighting(this->GetBeamDeweightingScore(beamConstants, pVertex));
     
-    const float energyKick(SVMHelper::CalculateFeaturesOfType<EnergyKickFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+    const double energyKick(SVMHelper::CalculateFeaturesOfType<EnergyKickFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
         clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float localAsymmetry(SVMHelper::CalculateFeaturesOfType<LocalAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+    const double localAsymmetry(SVMHelper::CalculateFeaturesOfType<LocalAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
         clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float globalAsymmetry(SVMHelper::CalculateFeaturesOfType<GlobalAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+    const double globalAsymmetry(SVMHelper::CalculateFeaturesOfType<GlobalAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
         clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float showerAsymmetry(SVMHelper::CalculateFeaturesOfType<ShowerAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+    const double showerAsymmetry(SVMHelper::CalculateFeaturesOfType<ShowerAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
         clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
         
-    const float rPhiFeature(SVMHelper::CalculateFeaturesOfType<RPhiFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+    const double rPhiFeature(SVMHelper::CalculateFeaturesOfType<RPhiFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+        clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
+        
+    const double rPhiFeaturse(SVMHelper::CalculateFeatures(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
         clusterListMap, kdTreeMap, showerClusterListMap, beamDeweighting, bestFastScore).at(0));
     
     VertexFeatureInfo vertexFeatureInfo(beamDeweighting, rPhiFeature, energyKick, localAsymmetry, globalAsymmetry, showerAsymmetry);
@@ -672,10 +675,10 @@ std::string SVMVertexSelectionAlgorithm::GetCheatedVertex(const VertexVector &ve
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-FloatVector SVMVertexSelectionAlgorithm::GenerateFeatureList(const EventFeatureInfo &eventFeatureInfo, const VertexFeatureInfoMap &vertexFeatureInfoMap,
+SupportVectorMachine::DoubleVector SVMVertexSelectionAlgorithm::GenerateFeatureList(const EventFeatureInfo &eventFeatureInfo, const VertexFeatureInfoMap &vertexFeatureInfoMap,
     const Vertex * const pVertex, const VertexList &topNVertices) const
 {
-    FloatVector featureList;
+    SupportVectorMachine::DoubleVector featureList;
     this->AddEventFeaturesToVector(eventFeatureInfo, featureList);
     
     VertexFeatureInfo vertexFeatureInfo(vertexFeatureInfoMap.at(pVertex));
@@ -717,27 +720,27 @@ FloatVector SVMVertexSelectionAlgorithm::GenerateFeatureList(const EventFeatureI
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-void SVMVertexSelectionAlgorithm::AddEventFeaturesToVector(const EventFeatureInfo &eventFeatureInfo, FloatVector &featureVector) const
+void SVMVertexSelectionAlgorithm::AddEventFeaturesToVector(const EventFeatureInfo &eventFeatureInfo, SupportVectorMachine::DoubleVector &featureVector) const
 {
-    featureVector.push_back(eventFeatureInfo.m_eventShoweryness);
-    featureVector.push_back(eventFeatureInfo.m_eventEnergy);
-    featureVector.push_back(eventFeatureInfo.m_eventVolume);
-    featureVector.push_back(eventFeatureInfo.m_longitudinality);
-    featureVector.push_back(static_cast<float>(eventFeatureInfo.m_nHits));
-    featureVector.push_back(static_cast<float>(eventFeatureInfo.m_nClusters));
-    featureVector.push_back(static_cast<float>(eventFeatureInfo.m_nCandidates));
+    featureVector.push_back(static_cast<double>(eventFeatureInfo.m_eventShoweryness));
+    featureVector.push_back(static_cast<double>(eventFeatureInfo.m_eventEnergy));
+    featureVector.push_back(static_cast<double>(eventFeatureInfo.m_eventVolume));
+    featureVector.push_back(static_cast<double>(eventFeatureInfo.m_longitudinality));
+    featureVector.push_back(static_cast<double>(eventFeatureInfo.m_nHits));
+    featureVector.push_back(static_cast<double>(eventFeatureInfo.m_nClusters));
+    featureVector.push_back(static_cast<double>(eventFeatureInfo.m_nCandidates));
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-void SVMVertexSelectionAlgorithm::AddVertexFeaturesToVector(const VertexFeatureInfo &vertexFeatureInfo, FloatVector &featureVector) const
+void SVMVertexSelectionAlgorithm::AddVertexFeaturesToVector(const VertexFeatureInfo &vertexFeatureInfo, SupportVectorMachine::DoubleVector &featureVector) const
 {
-    featureVector.push_back(vertexFeatureInfo.m_beamDeweighting);
-    featureVector.push_back(vertexFeatureInfo.m_energyKick);
-    featureVector.push_back(vertexFeatureInfo.m_globalAsymmetry);
-    featureVector.push_back(vertexFeatureInfo.m_localAsymmetry);;
-    featureVector.push_back(vertexFeatureInfo.m_showerAsymmetry);
-    featureVector.push_back(vertexFeatureInfo.m_rPhiFeature);
+    featureVector.push_back(static_cast<double>(vertexFeatureInfo.m_beamDeweighting));
+    featureVector.push_back(static_cast<double>(vertexFeatureInfo.m_energyKick));
+    featureVector.push_back(static_cast<double>(vertexFeatureInfo.m_globalAsymmetry));
+    featureVector.push_back(static_cast<double>(vertexFeatureInfo.m_localAsymmetry));
+    featureVector.push_back(static_cast<double>(vertexFeatureInfo.m_showerAsymmetry));
+    featureVector.push_back(static_cast<double>(vertexFeatureInfo.m_rPhiFeature));
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -751,7 +754,7 @@ SVMVertexSelectionAlgorithm::FeatureListVector SVMVertexSelectionAlgorithm::Gene
         throw StatusCodeException(STATUS_CODE_FAILURE);
     }
         
-    FloatVector staticFeatureList;
+    SupportVectorMachine::DoubleVector staticFeatureList;
     this->AddEventFeaturesToVector(eventFeatureInfo, staticFeatureList);
     
     VertexFeatureInfo vertexFeatureInfo(vertexFeatureInfoMap.at(pVertex));
@@ -770,7 +773,7 @@ SVMVertexSelectionAlgorithm::FeatureListVector SVMVertexSelectionAlgorithm::Gene
     FeatureListVector featureListVector;    
     do
     {
-        FloatVector featureList(staticFeatureList);
+        SupportVectorMachine::DoubleVector featureList(staticFeatureList);
         for (const Vertex * const pTopNVertex : vertexVector)
         {
             const auto featureInfoIter = vertexFeatureInfoMap.find(pTopNVertex);
