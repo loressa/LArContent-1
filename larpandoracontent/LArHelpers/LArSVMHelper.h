@@ -31,7 +31,7 @@ public:
      *
      *  @return  success
      */
-    template <typename ...TLISTS>
+    template <int ...TLISTS>
     static pandora::StatusCode ProduceTrainingExample(const std::string &trainingOutputFile, const bool result, TLISTS &&... featureLists);
 
     /**

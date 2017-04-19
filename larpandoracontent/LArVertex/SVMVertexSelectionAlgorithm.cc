@@ -21,8 +21,6 @@
 #include "larpandoracontent/LArVertex/SVMVertexSelectionAlgorithm.h"
 
 
-
-
 #include "larpandoracontent/LArHelpers/LArMCParticleHelper.h" 
 #include "larpandoracontent/LArObjects/LArMCParticle.h"
 

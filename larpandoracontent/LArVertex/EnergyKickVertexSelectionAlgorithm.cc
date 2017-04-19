@@ -49,19 +49,16 @@ void EnergyKickVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &
     for (const Vertex *const pVertex : vertexVector)
     {
         const float beamDeweightingScore(this->IsBeamModeOn() ? this->GetBeamDeweightingScore(beamConstants, pVertex) : 0.f);
-        (void) beamDeweightingScore;
-        (void) bestFastScore;
-        (void)vertexScoreList;
-        //const float energyKick(SVMHelper::CalculateFeature<EnergyKickFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-        //    ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
+        const float energyKick(SVMHelper::CalculateFeaturesOfType<EnergyKickFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+            ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore).at(0));
             
-        //const float energyAsymmetry(SVMHelper::CalculateFeature<LocalAsymmetryFeatureTool>(m_featureToolMap, this, pVertex, slidingFitDataListMap, 
-        //    ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
+        const float energyAsymmetry(SVMHelper::CalculateFeaturesOfType<LocalAsymmetryFeatureTool>(m_featureToolVector, this, pVertex, slidingFitDataListMap, 
+            ClusterListMap(), KDTreeMap(), ShowerClusterListMap(), beamDeweightingScore, bestFastScore).at(0));
         
-       // const float energyKickScore(-energyKick / m_epsilon);
-       // const float energyAsymmetryScore(energyAsymmetry / m_asymmetryConstant);
+        const float energyKickScore(-energyKick / m_epsilon);
+        const float energyAsymmetryScore(energyAsymmetry / m_asymmetryConstant);
         
-        //vertexScoreList.push_back(VertexScore(pVertex, beamDeweightingScore + energyKickScore + energyAsymmetryScore));
+        vertexScoreList.push_back(VertexScore(pVertex, beamDeweightingScore + energyKickScore + energyAsymmetryScore));
     }
 }
 

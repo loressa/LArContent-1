@@ -34,15 +34,11 @@ void HitAngleVertexSelectionAlgorithm::GetVertexScoreList(const VertexVector &ve
     float bestFastScore(0.f);
     for (const Vertex *const pVertex : vertexVector)
     {
-        (void) pVertex;
-        (void) vertexScoreList;
-        (void) bestFastScore;
-        (void) beamConstants;
-        //const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(this->GetBeamDeweightingScore(beamConstants, pVertex)) : 1.f);
-        //const float rPhiScore(SVMHelper::CalculateFeature<RPhiFeatureTool>(m_featureToolMap, this, pVertex, SlidingFitDataListMap(), 
-        //    ClusterListMap(), kdTreeMap, ShowerClusterListMap(), beamDeweightingScore, bestFastScore));
+        const float beamDeweightingScore(this->IsBeamModeOn() ? std::exp(this->GetBeamDeweightingScore(beamConstants, pVertex)) : 1.f);
+        const float rPhiScore(SVMHelper::CalculateFeaturesOfType<RPhiFeatureTool>(m_featureToolVector, this, pVertex, SlidingFitDataListMap(), 
+            ClusterListMap(), kdTreeMap, ShowerClusterListMap(), beamDeweightingScore, bestFastScore).at(0));
 
-        //vertexScoreList.emplace_back(pVertex, beamDeweightingScore * rPhiScore);
+        vertexScoreList.emplace_back(pVertex, beamDeweightingScore * rPhiScore);
     }
 }
 
