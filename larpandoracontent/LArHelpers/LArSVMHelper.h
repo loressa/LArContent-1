@@ -141,7 +141,7 @@ private:
     static SupportVectorMachine::DoubleVector ConcatenateFeatureLists(TLIST &&featureList, TLISTS &&... featureLists);
 
     /**
-     *  @brief  Recursively concatenate sets of feature lists into an array (terminating method)
+     *  @brief  Recursively concatenate vectors of features(terminating method)
      */
     static SupportVectorMachine::DoubleVector ConcatenateFeatureLists();
 };
